@@ -7,7 +7,7 @@
 // risk and the price-vs-value spread (fee-aware).
 // ─────────────────────────────────────────────────────────────────────────────
 import { RoliItem } from '../types';
-import { MARKETPLACE_FEE, priceOutlook, suggestSellPrice } from './scoring';
+import { MARKETPLACE_FEE, priceOutlook, suggestSellPrice, blendedValue, isVolatile } from './scoring';
 
 export interface ProfitPossibility {
   label: '🟢 High' | '🟡 Medium' | '🟠 Low' | '🔴 None';
@@ -29,6 +29,54 @@ export function profitPossibility(buyPrice: number, targetValue: number): Profit
   return { label, netIfFlip: net, profit, pct: Math.round(pct * 10) / 10 };
 }
 
+// ─── Trade evaluation ────────────────────────────────────────────────────────
+export interface TradeSide {
+  items: RoliItem[];
+  value: number;   // summed blended value
+  rap: number;     // summed RAP
+  demand: number;  // summed demand (rated items only)
+}
+
+export interface TradeVerdict {
+  give: TradeSide;
+  receive: TradeSide;
+  valueDiff: number;     // receive.value - give.value
+  valuePct: number;      // diff as % of give.value
+  rapDiff: number;
+  verdict: '✅ Win' | '⚖️ Fair' | '❌ Loss';
+  notes: string[];
+}
+
+function sumSide(items: RoliItem[]): TradeSide {
+  return {
+    items,
+    value: items.reduce((s, i) => s + (blendedValue(i) || i.rap || 0), 0),
+    rap: items.reduce((s, i) => s + (i.rap || 0), 0),
+    demand: items.reduce((s, i) => s + (i.demand > 0 ? i.demand : 0), 0),
+  };
+}
+
+/** Evaluates a proposed trade (items you give vs receive) by blended value. */
+export function evaluateTrade(giveItems: RoliItem[], receiveItems: RoliItem[]): TradeVerdict {
+  const give = sumSide(giveItems);
+  const receive = sumSide(receiveItems);
+  const valueDiff = receive.value - give.value;
+  const valuePct = give.value > 0 ? Math.round((valueDiff / give.value) * 1000) / 10 : 0;
+  const rapDiff = receive.rap - give.rap;
+
+  const verdict: TradeVerdict['verdict'] =
+    valuePct >= 5 ? '✅ Win' : valuePct <= -5 ? '❌ Loss' : '⚖️ Fair';
+
+  const notes: string[] = [];
+  if (receive.demand > give.demand) notes.push('You gain on demand — easier to re-trade what you receive.');
+  else if (receive.demand < give.demand) notes.push('You lose on demand — what you receive may be harder to move.');
+  if (receiveItems.some(i => i.projected)) notes.push('⚠️ Some received items are **projected** — their value may be inflated.');
+  if (receiveItems.length > giveItems.length) notes.push('You receive more items (an "overpay") — good if they hold value.');
+  if (Math.abs(valuePct) < 5) notes.push('Value is close to even — decide on demand and how badly you want the items.');
+
+  return { give, receive, valueDiff, valuePct, rapDiff, verdict, notes };
+}
+
 export interface SellGuidance {
   suggestedPrice: number; // realistic list price (≤ RAP for liquidity)
   net: number;            // proceeds after fee
@@ -45,7 +93,7 @@ export function sellGuidance(args: {
   meta: RoliItem | undefined; rap: number; cost: number | null; marginPct: number;
 }): SellGuidance {
   const { meta, rap, cost, marginPct } = args;
-  const projected = meta && meta.value > 0 ? meta.value : rap;
+  const projected = meta ? blendedValue(meta) || rap : rap;
   // suggestSellPrice targets a net margin over basis but caps at RAP so it
   // actually sells; basis is our cost when known, else RAP.
   const { listPrice, netProceeds } = suggestSellPrice(cost ?? rap, marginPct, rap);
@@ -83,6 +131,7 @@ export interface ItemAnalysis {
   discountPercent: number | null;        // lowest vs RAP
   buyAdvice: string;          // when / whether to buy
   dropLikely: boolean;        // prediction: price likely to drop further
+  volatile: boolean;          // price unreliable/unstable → widen margins
 }
 
 /**
@@ -96,9 +145,11 @@ export function analyzeItem(args: {
   recentPrices: number[];
 }): ItemAnalysis {
   const { meta, rap, lowestPrice, recentPrices } = args;
-  const projected = meta && meta.value > 0 ? meta.value : rap;
+  // Blended fair value is the basis for profit math (RAP + projected, discounted).
+  const projected = meta ? blendedValue(meta) || rap : rap;
   const demand = meta?.demand ?? -1;
   const outlook = priceOutlook(meta);
+  const volatile = isVolatile(meta);
 
   const discountPercent =
     lowestPrice != null && rap > 0 ? Math.round(((rap - lowestPrice) / rap) * 1000) / 10 : null;
@@ -133,6 +184,6 @@ export function analyzeItem(args: {
 
   return {
     meta, rap, projected, lowestPrice, recentPrices, demand, outlook,
-    possibility, discountPercent, buyAdvice, dropLikely,
+    possibility, discountPercent, buyAdvice, dropLikely, volatile,
   };
 }

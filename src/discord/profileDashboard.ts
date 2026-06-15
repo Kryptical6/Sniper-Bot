@@ -9,8 +9,9 @@ import {
 import { RoliItem } from '../types';
 import { priceOutlook } from '../services/scoring';
 import { profitPossibility, sellGuidance } from '../services/analysis';
+import { isVolatile } from '../services/scoring';
 import { Panel } from './dashboards';
-import { colors, robux, itemUrl } from './embeds';
+import { colors, robux, itemUrl, thumbUrl } from './embeds';
 
 export interface ProfileSummary {
   username: string;
@@ -52,46 +53,68 @@ export function profileDashboard(p: ProfileSummary): Panel {
 // ─── Inventory view ──────────────────────────────────────────────────────────
 const demandStars = (d: number) => (d < 0 ? 'Unrated' : '⭐'.repeat(d) + '☆'.repeat(4 - d));
 
+const POSS_COLOR: Record<string, number> = {
+  '🟢 High': colors.good, '🟡 Medium': colors.warn, '🟠 Low': 0xe67e22, '🔴 None': colors.bad,
+};
+
 export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): Panel {
-  const PER = 6;
+  // One card embed per item (with thumbnail) for readability. Discord caps a
+  // message at 10 embeds, so we show 4 cards + 1 header per page.
+  const PER = 4;
   const pages = Math.max(1, Math.ceil(rows.length / PER));
   const clamped = Math.min(Math.max(0, page), pages - 1);
   const slice = rows.slice(clamped * PER, clamped * PER + PER);
 
-  const embed = new EmbedBuilder()
-    .setColor(colors.info)
+  const totalRap = rows.reduce((s, r) => s + (r.rap || 0), 0);
+  const header = new EmbedBuilder()
+    .setColor(colors.brand)
     .setTitle('🎒 Inventory — Limiteds')
-    .setFooter({ text: `Page ${clamped + 1}/${pages} · ${rows.length} items` })
-    .setTimestamp();
+    .setDescription(`**${rows.length}** items  ·  Total RAP **${robux(totalRap)}**`)
+    .setFooter({ text: `Page ${clamped + 1} of ${pages}` });
+
+  const embeds: EmbedBuilder[] = [header];
 
   if (slice.length === 0) {
-    embed.setDescription('No limiteds found in this account.');
+    header.setDescription('No limiteds found in this account.');
   } else {
     for (const r of slice) {
       const pl = r.cost != null ? r.rap - r.cost : null;
-      // Profit possibility: sell at projected value (or RAP) vs what we paid
-      // (or RAP if cost unknown), fee-aware.
-      const target = r.meta && r.meta.value > 0 ? r.meta.value : r.rap;
+      const target = r.meta ? (r.meta.value > 0 ? Math.round(r.meta.rap * 0.5 + r.meta.value * 0.5) : r.rap) : r.rap;
       const basis = r.cost ?? r.rap;
       const poss = profitPossibility(basis, target);
       const sell = sellGuidance({ meta: r.meta, rap: r.rap, cost: r.cost, marginPct });
-      const lines = [
-        `**RAP** ${robux(r.rap)}  ·  **Demand** ${demandStars(r.meta?.demand ?? -1)}`,
-        `**Outlook** ${priceOutlook(r.meta)}`,
-      ];
-      if (r.cost != null) {
-        lines.push(`**Bought** ${robux(r.cost)}  ·  **Unrealised** ${pl! >= 0 ? '+' : ''}${robux(pl!)}`);
-      }
-      lines.push(`**Profit potential** ${poss.label}  (${poss.pct >= 0 ? '+' : ''}${poss.pct}% at ${robux(target)})`);
-      lines.push(`**Sell** ~${robux(sell.suggestedPrice)} → net ${robux(sell.net)}`);
-      lines.push(`${sell.advice}`);
-      lines.push(`[View on Roblox](${itemUrl(r.assetId)})`);
+      const volatile = isVolatile(r.meta);
 
-      embed.addFields({
-        name: `🔹 ${r.name}`.slice(0, 100),
-        value: lines.join('\n'),
+      const card = new EmbedBuilder()
+        .setColor(POSS_COLOR[poss.label] ?? colors.info)
+        .setTitle(r.name.slice(0, 240))
+        .setURL(itemUrl(r.assetId))
+        .setThumbnail(thumbUrl(r.assetId))
+        .addFields(
+          { name: 'RAP', value: robux(r.rap), inline: true },
+          { name: 'Demand', value: demandStars(r.meta?.demand ?? -1), inline: true },
+          { name: 'Outlook', value: priceOutlook(r.meta) + (volatile ? '  ⚠️' : ''), inline: true },
+        );
+
+      if (r.cost != null) {
+        card.addFields(
+          { name: 'Bought', value: robux(r.cost), inline: true },
+          { name: 'Unrealised', value: `${pl! >= 0 ? '+' : ''}${robux(pl!)}`, inline: true },
+          { name: 'Profit potential', value: `${poss.label} (${poss.pct >= 0 ? '+' : ''}${poss.pct}%)`, inline: true },
+        );
+      } else {
+        card.addFields(
+          { name: 'Profit potential', value: `${poss.label} (${poss.pct >= 0 ? '+' : ''}${poss.pct}% at ${robux(target)})`, inline: false },
+        );
+      }
+
+      card.addFields({
+        name: '💰 Suggested sell',
+        value: `**${robux(sell.suggestedPrice)}**  →  net ~${robux(sell.net)}\n${sell.advice}`,
         inline: false,
       });
+
+      embeds.push(card);
     }
   }
 
@@ -100,7 +123,7 @@ export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): P
     new ButtonBuilder().setCustomId(`p:inv:${clamped + 1}`).setLabel('Next').setStyle(ButtonStyle.Secondary).setEmoji('▶️').setDisabled(clamped >= pages - 1),
     new ButtonBuilder().setCustomId('p:back').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️'),
   );
-  return { embeds: [embed], components: [nav] };
+  return { embeds, components: [nav] };
 }
 
 // ─── History embed ───────────────────────────────────────────────────────────

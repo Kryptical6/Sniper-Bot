@@ -135,19 +135,32 @@ export async function initDb(): Promise<void> {
       posted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
 
-  // Rolimons trade-ad watchlist. Each row = one offer item + its request side.
+  // Price target alerts — DM when an item's lowest listing crosses a target.
   await query(`
-    CREATE TABLE IF NOT EXISTS rolimons_ads (
-      id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      offer_item_id    BIGINT      NOT NULL,
-      offer_item_name  TEXT        NOT NULL DEFAULT '',
-      request_item_ids BIGINT[]    NOT NULL DEFAULT '{}',
-      request_tags     TEXT[]      NOT NULL DEFAULT '{}',
-      auto_readvertise BOOLEAN     NOT NULL DEFAULT FALSE,
-      last_posted_at   TIMESTAMPTZ,
-      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    CREATE TABLE IF NOT EXISTS price_alerts (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      item_id      BIGINT      NOT NULL,
+      item_name    TEXT        NOT NULL DEFAULT '',
+      direction    TEXT        NOT NULL,            -- 'buy' (<= target) | 'sell' (>= target)
+      target_price INT         NOT NULL,
+      active       BOOLEAN     NOT NULL DEFAULT TRUE,
+      triggered_at TIMESTAMPTZ,
+      last_price   INT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rolimons_ads_offer ON rolimons_ads(offer_item_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_price_alerts_active ON price_alerts(active)`);
+
+  // Demand/trend snapshots for the movers digest.
+  await query(`
+    CREATE TABLE IF NOT EXISTS movers_snapshots (
+      item_id     BIGINT PRIMARY KEY,
+      name        TEXT        NOT NULL DEFAULT '',
+      rap         INT         NOT NULL DEFAULT 0,
+      demand      INT         NOT NULL DEFAULT -1,
+      trend       INT         NOT NULL DEFAULT -1,
+      value       INT         NOT NULL DEFAULT 0,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
 
   // Recommendation snapshots so we can throttle repeat alerts.
   await query(`

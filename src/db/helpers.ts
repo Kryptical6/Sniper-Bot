@@ -316,75 +316,6 @@ export async function getRealizedPnl(): Promise<{ sold: number; proceeds: number
   return { sold: rows[0].sold, proceeds: rows[0].proceeds, cost: rows[0].cost };
 }
 
-// ─── Rolimons trade ads ──────────────────────────────────────────────────────
-export interface AdEntry {
-  id: string;
-  offerItemId: number;
-  offerItemName: string;
-  requestItemIds: number[];
-  requestTags: string[];
-  autoReadvertise: boolean;
-  lastPostedAt: Date | null;
-}
-
-function mapAd(r: any): AdEntry {
-  return {
-    id: r.id,
-    offerItemId: Number(r.offer_item_id),
-    offerItemName: r.offer_item_name,
-    requestItemIds: (r.request_item_ids ?? []).map((x: any) => Number(x)),
-    requestTags: r.request_tags ?? [],
-    autoReadvertise: r.auto_readvertise,
-    lastPostedAt: r.last_posted_at ? new Date(r.last_posted_at) : null,
-  };
-}
-
-export async function upsertAd(a: {
-  offerItemId: number; offerItemName: string;
-  requestItemIds: number[]; requestTags: string[];
-}): Promise<void> {
-  await query(
-    `INSERT INTO rolimons_ads (offer_item_id, offer_item_name, request_item_ids, request_tags)
-     VALUES ($1,$2,$3,$4)
-     ON CONFLICT (offer_item_id) DO UPDATE SET
-       offer_item_name = COALESCE(NULLIF($2,''), rolimons_ads.offer_item_name),
-       request_item_ids = $3, request_tags = $4`,
-    [a.offerItemId, a.offerItemName, a.requestItemIds, a.requestTags]
-  );
-}
-
-export async function removeAd(id: string): Promise<void> {
-  await query(`DELETE FROM rolimons_ads WHERE id = $1`, [id]);
-}
-
-export async function listAds(): Promise<AdEntry[]> {
-  const { rows } = await query(`SELECT * FROM rolimons_ads ORDER BY created_at`);
-  return rows.map(mapAd);
-}
-
-export async function getAd(id: string): Promise<AdEntry | null> {
-  const { rows } = await query(`SELECT * FROM rolimons_ads WHERE id = $1`, [id]);
-  return rows[0] ? mapAd(rows[0]) : null;
-}
-
-export async function toggleAdAuto(id: string): Promise<boolean> {
-  const { rows } = await query(
-    `UPDATE rolimons_ads SET auto_readvertise = NOT auto_readvertise WHERE id = $1 RETURNING auto_readvertise`,
-    [id]
-  );
-  return rows[0]?.auto_readvertise ?? false;
-}
-
-export async function markAdPosted(id: string): Promise<void> {
-  await query(`UPDATE rolimons_ads SET last_posted_at = NOW() WHERE id = $1`, [id]);
-}
-
-/** Most recent post time across all ads (for the global 15-min cooldown). */
-export async function lastAdPostTime(): Promise<Date | null> {
-  const { rows } = await query(`SELECT MAX(last_posted_at) AS t FROM rolimons_ads`);
-  return rows[0]?.t ? new Date(rows[0].t) : null;
-}
-
 // ─── Profile / inventory / history ───────────────────────────────────────────
 /** Map of itemId → most recent cost we paid (for the inventory view). */
 export async function getCostByItem(): Promise<Map<number, number>> {
@@ -418,6 +349,80 @@ export async function getTradeHistory(limit = 25): Promise<{
     soldAt: r.sold_at ? new Date(r.sold_at) : null,
     createdAt: new Date(r.created_at),
   }));
+}
+
+// ─── Price alerts ────────────────────────────────────────────────────────────
+export interface PriceAlert {
+  id: string;
+  itemId: number;
+  itemName: string;
+  direction: 'buy' | 'sell';
+  targetPrice: number;
+  active: boolean;
+  lastPrice: number | null;
+}
+
+function mapAlert(r: any): PriceAlert {
+  return {
+    id: r.id, itemId: Number(r.item_id), itemName: r.item_name,
+    direction: r.direction, targetPrice: r.target_price,
+    active: r.active, lastPrice: r.last_price,
+  };
+}
+
+export async function addAlert(a: {
+  itemId: number; itemName: string; direction: 'buy' | 'sell'; targetPrice: number;
+}): Promise<void> {
+  await query(
+    `INSERT INTO price_alerts (item_id, item_name, direction, target_price)
+     VALUES ($1,$2,$3,$4)`,
+    [a.itemId, a.itemName, a.direction, a.targetPrice]
+  );
+}
+
+export async function removeAlert(id: string): Promise<void> {
+  await query(`DELETE FROM price_alerts WHERE id = $1`, [id]);
+}
+
+export async function listAlerts(): Promise<PriceAlert[]> {
+  const { rows } = await query(`SELECT * FROM price_alerts ORDER BY active DESC, created_at DESC`);
+  return rows.map(mapAlert);
+}
+
+export async function getActiveAlerts(): Promise<PriceAlert[]> {
+  const { rows } = await query(`SELECT * FROM price_alerts WHERE active = TRUE`);
+  return rows.map(mapAlert);
+}
+
+export async function triggerAlert(id: string, price: number): Promise<void> {
+  await query(
+    `UPDATE price_alerts SET active = FALSE, triggered_at = NOW(), last_price = $2 WHERE id = $1`,
+    [id, price]
+  );
+}
+
+// ─── Movers snapshots ────────────────────────────────────────────────────────
+export interface MoverSnapshot { itemId: number; rap: number; demand: number; trend: number; value: number; }
+
+export async function getMoverSnapshots(): Promise<Map<number, MoverSnapshot>> {
+  const { rows } = await query(`SELECT item_id, rap, demand, trend, value FROM movers_snapshots`);
+  const m = new Map<number, MoverSnapshot>();
+  for (const r of rows) m.set(Number(r.item_id), {
+    itemId: Number(r.item_id), rap: r.rap, demand: r.demand, trend: r.trend, value: r.value,
+  });
+  return m;
+}
+
+export async function upsertMoverSnapshot(s: {
+  itemId: number; name: string; rap: number; demand: number; trend: number; value: number;
+}): Promise<void> {
+  await query(
+    `INSERT INTO movers_snapshots (item_id, name, rap, demand, trend, value, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,NOW())
+     ON CONFLICT (item_id) DO UPDATE SET
+       name=$2, rap=$3, demand=$4, trend=$5, value=$6, updated_at=NOW()`,
+    [s.itemId, s.name, s.rap, s.demand, s.trend, s.value]
+  );
 }
 
 export async function recentHistory(limit: number) {

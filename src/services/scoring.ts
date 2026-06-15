@@ -40,8 +40,7 @@ export function scoreItem(
   balance: number,
   recentSales: number
 ): ScoreBreakdown {
-  const projected = item.value > 0 ? item.value : item.rap;
-  const reference = Math.max(projected, item.rap, 1);
+  const reference = Math.max(blendedValue(item), item.rap, 1);
 
   // ROI: how far below reference value is the price. 0% → 0, 50%+ under → 100.
   const discountPercent = ((reference - price) / reference) * 100;
@@ -116,6 +115,33 @@ export function priceOutlook(item: { trend: number; projected: boolean; demand: 
   if (item.demand >= 3) return '📈 Likely up (high demand)';
   if (item.trend === 1) return '↔️ Unstable';
   return '➡️ Stable';
+}
+
+/**
+ * Blended fair-value basis for profit math (the primary value source).
+ *   - No projection data → RAP.
+ *   - Projected/manipulated → lean heavily on RAP (projected price is unreliable).
+ *   - Healthy item → balanced blend of RAP and projected value.
+ * This keeps estimates conservative on risky items and forward-looking on solid ones.
+ */
+export function blendedValue(item: { rap: number; value: number; projected: boolean } | undefined): number {
+  if (!item) return 0;
+  const rap = item.rap || 0;
+  if (item.value <= 0) return rap;
+  if (item.projected) return Math.round(rap * 0.8 + item.value * 0.2);
+  return Math.round(rap * 0.5 + item.value * 0.5);
+}
+
+/** Flags items whose price is unreliable/unstable (widen safety margins). */
+export function isVolatile(item: { rap: number; value: number; projected: boolean; trend: number } | undefined): boolean {
+  if (!item) return true;
+  if (item.projected) return true;
+  if (item.trend === 1 || item.trend === 4) return true; // Unstable / Fluctuating
+  if (item.value > 0 && item.rap > 0) {
+    const divergence = Math.abs(item.value - item.rap) / item.rap;
+    if (divergence > 0.4) return true; // RAP and projected disagree a lot
+  }
+  return false;
 }
 
 export function buyTag(score: number): '🟢 Strong Buy' | '🟡 Hold' | '🔴 Avoid' {

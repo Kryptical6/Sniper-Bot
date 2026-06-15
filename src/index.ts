@@ -13,7 +13,8 @@ import { startSnipeEngine } from './services/snipeEngine';
 import { startFeedService } from './services/feedService';
 import { startRecommendAlerts } from './services/recommendService';
 import { startSellWatcher } from './services/sellService';
-import { startAdRotation } from './services/adService';
+import { startAlertWatcher } from './services/alertService';
+import { runMoversDigest } from './services/moversService';
 import { startDailyApprovalScheduler } from './scheduler/dailyApproval';
 
 async function main(): Promise<void> {
@@ -49,8 +50,10 @@ async function main(): Promise<void> {
     startFeedService();
     startRecommendAlerts();
     startSellWatcher();
-    startAdRotation();
+    startAlertWatcher();
     startDailyApprovalScheduler();
+    // Seed the movers snapshot on boot so tomorrow's digest has a baseline.
+    void runMoversDigest();
   });
 
   client.on('interactionCreate', i => void handleInteraction(i));

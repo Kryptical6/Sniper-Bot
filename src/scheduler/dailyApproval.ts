@@ -13,6 +13,7 @@ import { getConfig, listWatch, ensureTodaysApprovalRow } from '../db/helpers';
 import { dailyApprovalEmbed } from '../discord/embeds';
 import { dmOwner } from '../discord/notify';
 import { computeRecommendations, buildRecommendEmbed } from '../services/recommendService';
+import { runMoversDigest } from '../services/moversService';
 
 export function startDailyApprovalScheduler(): void {
   const hour = config.dailyApprovalHourGmt;
@@ -37,6 +38,9 @@ export async function sendDailyPrompt(): Promise<void> {
     // Morning digest of recommendations.
     const { picks, balance: bal } = await computeRecommendations(8);
     if (picks.length) await dmOwner(buildRecommendEmbed(picks, bal));
+
+    // Daily market movers digest.
+    await runMoversDigest();
   } catch (e) {
     log.error('SCHEDULER', `Daily prompt failed: ${(e as Error).message}`);
   }

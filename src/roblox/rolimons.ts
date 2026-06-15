@@ -9,17 +9,11 @@
 //   defaultValue, demand, trend, projected, hyped, rare] } }
 // ─────────────────────────────────────────────────────────────────────────────
 import axios from 'axios';
-import { config } from '../config';
 import { log } from '../utils/logger';
 import { RoliItem } from '../types';
 
 const ITEM_DETAILS_URL = 'https://api.rolimons.com/items/v1/itemdetails';
-const CREATE_AD_URL = 'https://www.rolimons.com/tradeadsapi/createtradead';
 const REFRESH_MS = 60_000; // RoliMons asks callers not to poll faster than 60s
-
-/** Valid request-side tags accepted by Rolimons trade ads. */
-export const AD_TAGS = ['any', 'demand', 'rares', 'robux', 'upgrade', 'downgrade', 'rap', 'wishlist', 'projecteds', 'adds'] as const;
-export type AdTag = typeof AD_TAGS[number];
 
 class RolimonsClient {
   private cache = new Map<number, RoliItem>();
@@ -70,71 +64,6 @@ class RolimonsClient {
 
   get size(): number {
     return this.cache.size;
-  }
-
-  /**
-   * Posts a trade ad on Rolimons.
-   *
-   * ⚠️ Uses the unofficial createtradead endpoint, authenticated with the
-   * _RoliVerification cookie. Rolimons limits posting to ~1 ad / 15 min per
-   * account; callers must enforce that. offerItemIds and requestItemIds are
-   * Roblox catalog ids; requestTags are from AD_TAGS. Each side allows up to 4
-   * items; offer + request entries are padded with -1 (Rolimons' "empty" slot).
-   *
-   * @returns true on success.
-   */
-  async postTradeAd(
-    offerItemIds: number[],
-    requestItemIds: number[],
-    requestTags: AdTag[],
-  ): Promise<boolean> {
-    if (!config.rolimons.token) throw new Error('ROLIMONS_TOKEN not set — cannot post ads');
-
-    const pad = (arr: number[]) => {
-      const out = arr.slice(0, 4);
-      while (out.length < 4) out.push(-1);
-      return out;
-    };
-
-    const body = {
-      player_id: Number(config.roblox.userId),
-      offer_item_ids: pad(offerItemIds),
-      request_item_ids: pad(requestItemIds),
-      request_tags: requestTags.slice(0, 4),
-    };
-
-    const res = await axios.post(CREATE_AD_URL, body, {
-      timeout: 15_000,
-      headers: {
-        Cookie: `_RoliVerification=${config.rolimons.token}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest',
-        Origin: 'https://www.rolimons.com',
-        Referer: 'https://www.rolimons.com/tradeads',
-      },
-      validateStatus: () => true,
-    });
-
-    if (res.status === 200 && res.data?.success !== false) return true;
-
-    // Surface the real reason. Cloudflare blocks return HTML, not JSON.
-    const isHtml = typeof res.data === 'string' && /<html|cloudflare|captcha/i.test(res.data);
-    let msg: string;
-    if (res.status === 403) {
-      msg = isHtml
-        ? 'HTTP 403 — blocked by Rolimons/Cloudflare (likely the hosting IP, or the _RoliVerification cookie is invalid/expired).'
-        : `HTTP 403 — ${res.data?.message || res.data?.msg || 'forbidden (check cookie / account verification)'}`;
-    } else {
-      msg = res.data?.message || res.data?.msg || `HTTP ${res.status}`;
-    }
-    log.warn('ROLIMONS', `Trade ad rejected: ${msg}`);
-    log.debug('ROLIMONS', `Ad response body: ${typeof res.data === 'string' ? res.data.slice(0, 300) : JSON.stringify(res.data)}`);
-    throw new Error(msg);
   }
 }
 

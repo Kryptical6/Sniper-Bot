@@ -17,10 +17,6 @@ export const commands = [
     .setDescription('Open the new-limiteds feed dashboard'),
 
   new SlashCommandBuilder()
-    .setName('rolimons-ad')
-    .setDescription('Manage Rolimons trade ads'),
-
-  new SlashCommandBuilder()
     .setName('profile')
     .setDescription('Your RAP, balance, inventory and history'),
 
@@ -33,4 +29,16 @@ export const commands = [
     .setDescription('Look up a limited by ID or name and analyse it')
     .addStringOption(o =>
       o.setName('query').setDescription('Item ID, or a name/keyword').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('trade')
+    .setDescription('Evaluate a trade: items you give vs items you receive')
+    .addStringOption(o =>
+      o.setName('give').setDescription('Items you give — comma-separated IDs or names').setRequired(true))
+    .addStringOption(o =>
+      o.setName('receive').setDescription('Items you receive — comma-separated IDs or names').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('alert')
+    .setDescription('Manage price target alerts'),
 ];

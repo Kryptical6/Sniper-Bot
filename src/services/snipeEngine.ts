@@ -20,7 +20,7 @@ import { rolimons } from '../roblox/rolimons';
 import {
   getConfig, getTodaysApproval, listWatch, getWatchFloorMap, recordAttempt,
 } from '../db/helpers';
-import { scoreItem } from './scoring';
+import { scoreItem, blendedValue } from './scoring';
 import { snipeAlertEmbed } from '../discord/embeds';
 import { dmOwner } from '../discord/notify';
 import { SnipeCandidate } from '../types';
@@ -136,7 +136,7 @@ async function tick(): Promise<void> {
       name: meta.name,
       listing: cheapest,
       rap,
-      projectedValue: rolimons.effectiveValue(meta),
+      projectedValue: blendedValue(meta) || rolimons.effectiveValue(meta),
       demand: meta.demand,
       discountPercent: Math.round(discountPercent * 10) / 10,
       score: breakdown.total,

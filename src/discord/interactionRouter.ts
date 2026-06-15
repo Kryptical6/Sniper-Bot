@@ -13,8 +13,8 @@ import { log } from '../utils/logger';
 import {
   getConfig, setConfig, getTodaysApproval, setApprovalStatus, ensureTodaysApprovalRow,
   addWatch, removeWatch, listWatch, getStats, getHoldings, getListing, getRealizedPnl,
-  listAds, getAd, upsertAd, removeAd, toggleAdAuto,
   getCostByItem, getTradeHistory,
+  addAlert, listAlerts, removeAlert,
 } from '../db/helpers';
 import { buyResultEmbed, missedEmbed, robux } from './embeds';
 import {
@@ -29,14 +29,13 @@ import { executeBuy } from '../services/buyService';
 import { listSale, repriceSale, cancelSale } from '../services/sellService';
 import { suggestSellPrice } from '../services/scoring';
 import { pendingPrompts } from '../services/snipeEngine';
-import { adDashboard, adActionButtons, adAddModal } from './adDashboard';
-import { postAd, cooldownRemainingMs } from '../services/adService';
-import { AD_TAGS, AdTag } from '../roblox/rolimons';
 import {
   profileDashboard, inventoryView, historyEmbed, InventoryRow,
 } from './profileDashboard';
-import { analyzeItem } from '../services/analysis';
-import { searchEmbed, noMatchEmbed, SearchMatch } from './searchDashboard';
+import { analyzeItem, evaluateTrade } from '../services/analysis';
+import { searchEmbed, noMatchEmbed, tradeEmbed, SearchMatch } from './searchDashboard';
+import { alertDashboard, alertAddModal } from './alertDashboard';
+import { RoliItem } from '../types';
 
 export async function handleInteraction(i: Interaction): Promise<void> {
   if (i.user.id !== config.discord.ownerId) {
@@ -83,11 +82,6 @@ async function buildSellPayload() {
   return sellDashboard(rows);
 }
 
-async function buildAdPayload() {
-  const [ads, cd] = await Promise.all([listAds(), cooldownRemainingMs()]);
-  return adDashboard(ads, cd, Boolean(config.rolimons.token));
-}
-
 /** Shared inventory fetch used by the profile + inventory views. */
 async function loadInventory(): Promise<InventoryRow[]> {
   await rolimons.refresh();
@@ -121,6 +115,28 @@ async function buildItemAnalysis(itemId: number, matches: SearchMatch[] = []) {
     recentPrices: detail?.recentPrices ?? [],
   });
   return searchEmbed(name, itemId, analysis, matches);
+}
+
+/** Resolves a comma-separated list of ids/names to RoliMons items. */
+async function resolveItemList(raw: string): Promise<{ items: RoliItem[]; unresolved: string[] }> {
+  await rolimons.refresh();
+  const items: RoliItem[] = [];
+  const unresolved: string[] = [];
+  for (const tokenRaw of raw.split(',')) {
+    const token = tokenRaw.trim();
+    if (!token) continue;
+    let item: RoliItem | undefined;
+    if (/^\d+$/.test(token)) {
+      item = rolimons.get(Number(token));
+    } else {
+      const q = token.toLowerCase();
+      item = rolimons.all()
+        .filter(i => i.name.toLowerCase().includes(q) || i.acronym.toLowerCase() === q)
+        .sort((a, b) => b.rap - a.rap)[0];
+    }
+    if (item) items.push(item); else unresolved.push(token);
+  }
+  return { items, unresolved };
 }
 
 /** Resolves a free-text query to an item id (+ alternative matches). */
@@ -159,7 +175,6 @@ async function buildProfilePayload() {
 async function handleCommand(i: ChatInputCommandInteraction): Promise<void> {
   if (i.commandName === 'snipe') return void i.reply({ ...(await buildSnipePayload()), ephemeral: true });
   if (i.commandName === 'feed')  return void i.reply({ ...(await buildFeedPayload()), ephemeral: true });
-  if (i.commandName === 'rolimons-ad') return void i.reply({ ...(await buildAdPayload()), ephemeral: true });
   if (i.commandName === 'profile') {
     await i.deferReply({ ephemeral: true });
     return void i.editReply(await buildProfilePayload());
@@ -174,6 +189,19 @@ async function handleCommand(i: ChatInputCommandInteraction): Promise<void> {
     const { id, matches } = await resolveQuery(query);
     if (id == null) return void i.editReply(noMatchEmbed(query));
     return void i.editReply(await buildItemAnalysis(id, matches));
+  }
+  if (i.commandName === 'trade') {
+    await i.deferReply({ ephemeral: true });
+    const give = await resolveItemList(i.options.getString('give', true));
+    const receive = await resolveItemList(i.options.getString('receive', true));
+    if (give.items.length === 0 && receive.items.length === 0) {
+      return void i.editReply(noMatchEmbed('those items'));
+    }
+    const verdict = evaluateTrade(give.items, receive.items);
+    return void i.editReply(tradeEmbed(verdict, [...give.unresolved, ...receive.unresolved]));
+  }
+  if (i.commandName === 'alert') {
+    return void i.reply({ ...alertDashboard(await listAlerts()), ephemeral: true });
   }
 }
 
@@ -209,22 +237,9 @@ async function handleButton(i: ButtonInteraction): Promise<void> {
     return void i.editReply(r.detail);
   }
 
-  // Rolimons ad dashboard
-  if (id === 'r:add') return void i.showModal(adAddModal());
-  if (id === 'r:refresh') return void i.update(await buildAdPayload());
-  if (id.startsWith('r:post:')) {
-    await i.deferReply({ ephemeral: true });
-    const r = await postAd(id.slice('r:post:'.length));
-    return void i.editReply(r.detail);
-  }
-  if (id.startsWith('r:auto:')) {
-    const on = await toggleAdAuto(id.slice('r:auto:'.length));
-    return void i.reply({ content: on ? '🔁 Auto re-advertise **enabled**.' : '⏸️ Auto re-advertise **disabled**.', ephemeral: true });
-  }
-  if (id.startsWith('r:rm:')) {
-    await removeAd(id.slice('r:rm:'.length));
-    return void i.reply({ content: '🗑️ Ad removed.', ephemeral: true });
-  }
+  // Price alerts
+  if (id === 'a:add') return void i.showModal(alertAddModal());
+  if (id === 'a:refresh') return void i.update(alertDashboard(await listAlerts()));
 
   // Profile dashboard
   if (id === 'p:refresh' || id === 'p:back') {
@@ -392,20 +407,17 @@ async function handleModal(i: ModalSubmitInteraction): Promise<void> {
     return void i.editReply(result.detail);
   }
 
-  if (i.customId === 'r:add:modal') {
-    const offerId = parseNum(i.fields.getTextInputValue('offer_id'));
-    if (offerId === undefined) return void i.reply({ content: '⚠️ Invalid offer item ID.', ephemeral: true });
-
-    const requestIds = (i.fields.getTextInputValue('request_ids') || '')
-      .split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0).slice(0, 4);
-    const validTags = new Set<string>(AD_TAGS as readonly string[]);
-    const requestTags = (i.fields.getTextInputValue('request_tags') || '')
-      .split(',').map(s => s.trim().toLowerCase()).filter(t => validTags.has(t)).slice(0, 4) as AdTag[];
-
+  if (i.customId === 'a:add:modal') {
+    const itemId = parseNum(i.fields.getTextInputValue('item_id'));
+    const dir = i.fields.getTextInputValue('direction').trim().toLowerCase();
+    const price = parseNum(i.fields.getTextInputValue('price'));
+    if (itemId === undefined) return void i.reply({ content: '⚠️ Invalid item ID.', ephemeral: true });
+    if (dir !== 'buy' && dir !== 'sell') return void i.reply({ content: '⚠️ Direction must be `buy` or `sell`.', ephemeral: true });
+    if (price === undefined || price < 1) return void i.reply({ content: '⚠️ Invalid target price.', ephemeral: true });
     await rolimons.refresh();
-    const name = rolimons.get(offerId)?.name ?? '';
-    await upsertAd({ offerItemId: offerId, offerItemName: name, requestItemIds: requestIds, requestTags });
-    return void i.reply({ content: `✅ Saved ad for **${name || offerId}** (request: ${requestIds.length} item(s), tags: ${requestTags.join(', ') || 'none'}).`, ephemeral: true });
+    const name = rolimons.get(itemId)?.name ?? '';
+    await addAlert({ itemId, itemName: name, direction: dir, targetPrice: price });
+    return refreshFromModal(i, alertDashboard(await listAlerts()));
   }
 }
 
@@ -430,14 +442,13 @@ async function handleStringSelect(i: StringSelectMenuInteraction): Promise<void>
     }
     return void i.reply({ ...manageListingButtons(listing.id), ephemeral: true });
   }
-  if (i.customId === 'r:pick') {
-    const ad = await getAd(i.values[0]);
-    if (!ad) return void i.reply({ content: '⚠️ Ad entry not found.', ephemeral: true });
-    return void i.reply({ ...adActionButtons(ad), ephemeral: true });
-  }
   if (i.customId === 'q:pick') {
     await i.deferUpdate();
     return void i.editReply(await buildItemAnalysis(Number(i.values[0])));
+  }
+  if (i.customId === 'a:remove') {
+    await removeAlert(i.values[0]);
+    return void i.update(alertDashboard(await listAlerts()));
   }
 }
 

@@ -6,7 +6,7 @@
 import {
   EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle,
 } from 'discord.js';
-import { ItemAnalysis } from '../services/analysis';
+import { ItemAnalysis, TradeVerdict } from '../services/analysis';
 import { Panel } from './dashboards';
 import { colors, robux, itemUrl, thumbUrl } from './embeds';
 
@@ -26,7 +26,7 @@ export function searchEmbed(name: string, itemId: number, a: ItemAnalysis, match
       { name: 'Demand', value: demandStars(a.demand), inline: true },
       { name: 'Lowest listing', value: a.lowestPrice != null ? robux(a.lowestPrice) : 'none live', inline: true },
       { name: 'vs RAP', value: a.discountPercent != null ? `${a.discountPercent >= 0 ? '↓' : '↑'} ${Math.abs(a.discountPercent)}%` : '—', inline: true },
-      { name: 'Outlook', value: a.outlook, inline: true },
+      { name: 'Outlook', value: a.outlook + (a.volatile ? '  ⚠️ volatile' : ''), inline: true },
       {
         name: 'Profit potential',
         value: a.possibility
@@ -63,6 +63,32 @@ export function searchEmbed(name: string, itemId: number, a: ItemAnalysis, match
   ));
 
   return { embeds: [embed], components };
+}
+
+// ─── Trade calculator ────────────────────────────────────────────────────────
+export function tradeEmbed(v: TradeVerdict, unresolved: string[]): Panel {
+  const color = v.verdict === '✅ Win' ? colors.good : v.verdict === '❌ Loss' ? colors.bad : colors.warn;
+  const sideList = (items: { name: string; rap: number }[]) =>
+    items.length ? items.map(i => `• ${i.name} — ${robux(i.rap)}`).join('\n') : '_nothing_';
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`🤝 Trade Verdict: ${v.verdict}`)
+    .setDescription(
+      `**Value swing:** ${v.valueDiff >= 0 ? '+' : ''}${robux(v.valueDiff)} ` +
+      `(${v.valuePct >= 0 ? '+' : ''}${v.valuePct}%)  ·  **RAP swing:** ${v.rapDiff >= 0 ? '+' : ''}${robux(v.rapDiff)}`
+    )
+    .addFields(
+      { name: `📤 You give  ·  value ${robux(v.give.value)}`, value: sideList(v.give.items), inline: false },
+      { name: `📥 You receive  ·  value ${robux(v.receive.value)}`, value: sideList(v.receive.items), inline: false },
+    )
+    .setFooter({ text: 'Value = blended RAP + projected (projected items discounted). Not financial advice.' })
+    .setTimestamp();
+
+  if (v.notes.length) embed.addFields({ name: 'Notes', value: v.notes.map(n => `• ${n}`).join('\n'), inline: false });
+  if (unresolved.length) embed.addFields({ name: '⚠️ Could not resolve', value: unresolved.join(', '), inline: false });
+
+  return { embeds: [embed], components: [] };
 }
 
 export function noMatchEmbed(query: string): Panel {

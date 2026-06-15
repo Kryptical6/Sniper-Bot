@@ -20,7 +20,9 @@ const demandStars = (d: number) =>
   d < 0 ? 'Unrated' : '⭐'.repeat(d) + '☆'.repeat(4 - d);
 
 export function thumbUrl(itemId: number): string {
-  return `https://thumbnails.roblox.com/v1/assets?assetIds=${itemId}&size=150x150&format=Png`;
+  // Redirect endpoint that 302s to the CDN image — Discord follows it and
+  // renders the picture (the thumbnails.roblox.com API returns JSON instead).
+  return `https://www.roblox.com/asset-thumbnail/image?assetId=${itemId}&width=150&height=150&format=png`;
 }
 export function itemUrl(itemId: number): string {
   return `https://www.roblox.com/catalog/${itemId}`;
@@ -115,25 +117,36 @@ export function recommendEmbed(
   picks: { item: RoliItem; price: number; breakdown: ScoreBreakdown }[],
   balance: number
 ) {
-  const embed = new EmbedBuilder()
+  const header = new EmbedBuilder()
     .setColor(COLORS.brand)
     .setTitle('📊 Top Limited Picks')
-    .setDescription(`Balance: **${R(balance)}** — ranked by overall score`)
+    .setDescription(
+      picks.length === 0
+        ? `Balance: **${R(balance)}**\n\nNothing meets the bar right now.`
+        : `Balance: **${R(balance)}**  ·  ranked by overall score`
+    )
     .setTimestamp();
 
-  if (picks.length === 0) {
-    embed.setDescription(`Balance: **${R(balance)}**\n\nNothing meets the bar right now.`);
-  }
-  picks.slice(0, 8).forEach((p, idx) => {
-    embed.addFields({
-      name: `${idx + 1}. ${buyTag(p.breakdown.total)}  ${p.item.name}  ·  ${p.breakdown.total.toFixed(0)}/100`,
-      value:
-        `**Price** ${R(p.price)} **Proj** ${R(p.item.value > 0 ? p.item.value : p.item.rap)} **Demand** ${demandStars(p.item.demand)}\n` +
-        `**ROI** ${p.breakdown.roi} **Activity** ${p.breakdown.activity} [View ↗](${itemUrl(p.item.id)})`,
-      inline: false,
-    });
+  const embeds = [header];
+  // One card per pick (with thumbnail). Cap at 9 cards + header (10 embed limit).
+  picks.slice(0, 9).forEach((p, idx) => {
+    const proj = p.item.value > 0 ? p.item.value : p.item.rap;
+    embeds.push(new EmbedBuilder()
+      .setColor(p.breakdown.total >= 75 ? COLORS.good : p.breakdown.total >= 50 ? COLORS.warn : COLORS.bad)
+      .setTitle(`${idx + 1}.  ${p.item.name}`)
+      .setURL(itemUrl(p.item.id))
+      .setThumbnail(thumbUrl(p.item.id))
+      .setDescription(`${buyTag(p.breakdown.total)}  ·  **${p.breakdown.total.toFixed(0)}/100**`)
+      .addFields(
+        { name: 'Price', value: R(p.price), inline: true },
+        { name: 'Projected', value: R(proj), inline: true },
+        { name: 'Demand', value: demandStars(p.item.demand), inline: true },
+        { name: 'ROI', value: String(p.breakdown.roi), inline: true },
+        { name: 'Activity', value: String(p.breakdown.activity), inline: true },
+        { name: 'Afford', value: String(p.breakdown.affordability), inline: true },
+      ));
   });
-  return { embeds: [embed] };
+  return { embeds };
 }
 
 export function realtimeRecEmbed(item: RoliItem, price: number, breakdown: ScoreBreakdown) {
