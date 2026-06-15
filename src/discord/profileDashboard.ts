@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { RoliItem } from '../types';
 import { priceOutlook } from '../services/scoring';
@@ -23,6 +24,7 @@ export interface ProfileSummary {
 
 export interface InventoryRow {
   assetId: number;
+  userAssetId: number;
   name: string;
   rap: number;
   cost: number | null;       // what we paid, if known
@@ -124,7 +126,33 @@ export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): P
     new ButtonBuilder().setCustomId(`p:inv:${clamped + 1}`).setLabel('Next').setStyle(ButtonStyle.Secondary).setEmoji('▶️').setDisabled(clamped >= pages - 1),
     new ButtonBuilder().setCustomId('p:back').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️'),
   );
-  return { embeds, components: [nav] };
+  const components: ActionRowBuilder<ButtonBuilder>[] = [];
+  const missingCost = slice.filter(r => r.cost == null);
+  if (missingCost.length) {
+    components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+      missingCost.map(r =>
+        new ButtonBuilder()
+          .setCustomId(`p:cost:${clamped}:${r.assetId}:${r.userAssetId}`)
+          .setLabel(`Set cost: ${r.name}`.slice(0, 80))
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('💵')
+      )
+    ));
+  }
+  components.push(nav);
+  return { embeds, components };
+}
+
+export function costBasisModal(page: number, assetId: number, userAssetId: number, itemName: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`p:cost:modal:${page}:${assetId}:${userAssetId}`)
+    .setTitle(`Set cost: ${itemName}`.slice(0, 45))
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('price').setLabel('Bought price (R$)')
+          .setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 2500'),
+      ),
+    );
 }
 
 // ─── History embed ───────────────────────────────────────────────────────────

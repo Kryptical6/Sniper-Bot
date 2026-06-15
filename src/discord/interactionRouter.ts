@@ -13,7 +13,7 @@ import { log } from '../utils/logger';
 import {
   getConfig, setConfig, getTodaysApproval, setApprovalStatus, ensureTodaysApprovalRow,
   addWatch, removeWatch, listWatch, getStats, getHoldings, getListing, getRealizedPnl,
-  getCostByItem, getTradeHistory,
+  getCostByUserAsset, getTradeHistory, recordHolding,
   addAlert, listAlerts, removeAlert,
   updateAttemptOutcome,
 } from '../db/helpers';
@@ -31,7 +31,7 @@ import { listSale, repriceSale, cancelSale } from '../services/sellService';
 import { suggestSellPrice } from '../services/scoring';
 import { pendingPrompts } from '../services/snipeEngine';
 import {
-  profileDashboard, inventoryView, historyEmbed, InventoryRow,
+  profileDashboard, inventoryView, historyEmbed, InventoryRow, costBasisModal,
 } from './profileDashboard';
 import { analyzeItem, evaluateTrade } from '../services/analysis';
 import { searchEmbed, noMatchEmbed, tradeEmbed, SearchMatch } from './searchDashboard';
@@ -88,14 +88,15 @@ async function loadInventory(): Promise<InventoryRow[]> {
   await rolimons.refresh();
   const [inv, dbCosts, txnCosts] = await Promise.all([
     roblox.getCollectibleInventory().catch(() => []),
-    getCostByItem(),                              // what the bot recorded buying
+    getCostByUserAsset(),                         // what the bot recorded buying, per copy
     roblox.getPurchaseCostMap().catch(() => new Map<number, number>()), // Roblox txn history
   ]);
   return inv.map(it => {
     // Prefer the bot's own record; fall back to Roblox purchase history.
-    const cost = dbCosts.get(it.assetId) ?? txnCosts.get(it.assetId) ?? null;
+    const cost = dbCosts.get(it.userAssetId) ?? txnCosts.get(it.assetId) ?? null;
     return {
       assetId: it.assetId,
+      userAssetId: it.userAssetId,
       name: it.name,
       rap: it.rap,
       cost,
@@ -257,6 +258,14 @@ async function handleButton(i: ButtonInteraction): Promise<void> {
     await i.deferUpdate();
     const [inv, cfg] = await Promise.all([loadInventory(), getConfig()]);
     return void i.editReply(inventoryView(inv, page, cfg.sellDefaultMarginPct));
+  }
+  if (id.startsWith('p:cost:')) {
+    const [, , pageStr, assetIdStr, userAssetIdStr] = id.split(':');
+    const assetId = Number(assetIdStr);
+    const userAssetId = Number(userAssetIdStr);
+    const inv = await loadInventory();
+    const item = inv.find(r => r.userAssetId === userAssetId);
+    return void i.showModal(costBasisModal(Number(pageStr) || 0, assetId, userAssetId, item?.name ?? `Item ${assetId}`));
   }
   if (id === 'p:history') {
     await i.deferUpdate();
@@ -425,6 +434,32 @@ async function handleModal(i: ModalSubmitInteraction): Promise<void> {
     const name = rolimons.get(itemId)?.name ?? '';
     await addAlert({ itemId, itemName: name, direction: dir, targetPrice: price });
     return refreshFromModal(i, alertDashboard(await listAlerts()));
+  }
+
+  if (i.customId.startsWith('p:cost:modal:')) {
+    const [, , , pageStr, assetIdStr, userAssetIdStr] = i.customId.split(':');
+    const page = Number(pageStr) || 0;
+    const assetId = Number(assetIdStr);
+    const userAssetId = Number(userAssetIdStr);
+    const price = parseNum(i.fields.getTextInputValue('price'));
+    if (price === undefined || price < 1) {
+      return void i.reply({ content: '⚠️ Invalid bought price.', ephemeral: true });
+    }
+
+    const inv = await roblox.getCollectibleInventory().catch(() => []);
+    const item = inv.find(r => r.userAssetId === userAssetId && r.assetId === assetId);
+    if (!item) {
+      return void i.reply({ content: '⚠️ Could not find that copy in the current inventory.', ephemeral: true });
+    }
+
+    await recordHolding({
+      itemId: item.assetId,
+      itemName: item.name,
+      userAssetId: item.userAssetId,
+      costRobux: price,
+    });
+    const [rows, cfg] = await Promise.all([loadInventory(), getConfig()]);
+    return refreshFromModal(i, inventoryView(rows, page, cfg.sellDefaultMarginPct));
   }
 }
 

@@ -369,6 +369,17 @@ export async function getCostByItem(): Promise<Map<number, number>> {
   return m;
 }
 
+/** Map of userAssetId → cost we paid, used for per-copy inventory basis. */
+export async function getCostByUserAsset(): Promise<Map<number, number>> {
+  const { rows } = await query(
+    `SELECT user_asset_id, cost_robux
+     FROM sale_listings`
+  );
+  const m = new Map<number, number>();
+  for (const r of rows) m.set(Number(r.user_asset_id), r.cost_robux);
+  return m;
+}
+
 /** Buy/sell history: every acquired copy with its outcome. */
 export async function getTradeHistory(limit = 25): Promise<{
   itemId: number; itemName: string; cost: number;
