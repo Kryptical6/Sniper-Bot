@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "db:migrate": "node dist/db/migrate.js"
+    "register": "ts-node-dev --transpile-only src/discord/registerCommands.ts"
   },
   "dependencies": {
     "discord.js": "^14.16.3",
