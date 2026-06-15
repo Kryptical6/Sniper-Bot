@@ -9,8 +9,10 @@ import { log } from '../utils/logger';
 import { sleep } from '../utils/sleep';
 import { roblox } from '../roblox/client';
 import {
-  getConfig, getListing, markListed, markSold, getStaleListings, touchNotified, getHoldings,
+  getConfig, getListing, markListed, markSold, markCancelled, getStaleListings,
+  touchNotified, getHoldings,
 } from '../db/helpers';
+import { query } from '../db';
 import { netAfterFee } from './scoring';
 import { dmOwner } from '../discord/notify';
 import { EmbedBuilder } from 'discord.js';
@@ -40,6 +42,45 @@ export async function listSale(listingId: string, price: number): Promise<ListRe
     ok: true,
     detail: `Listed **${listing.itemName}** at ${robux(price)} — nets ~${robux(net)} after fee (${net - listing.costRobux >= 0 ? '+' : ''}${robux(net - listing.costRobux)} vs cost).`,
   };
+}
+
+/** Repikes a currently-listed copy to a new price. */
+export async function repriceSale(listingId: string, newPrice: number): Promise<ListResult> {
+  const listing = await getListing(listingId);
+  if (!listing) return { ok: false, detail: 'Listing not found.' };
+  if (listing.status !== 'listed') return { ok: false, detail: `Not currently listed (${listing.status}).` };
+  if (newPrice < 1) return { ok: false, detail: 'Price must be at least 1 R$.' };
+
+  try {
+    const ok = await roblox.listForResale(listing.itemId, listing.userAssetId, newPrice);
+    if (!ok) return { ok: false, detail: 'Roblox rejected the reprice.' };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+  const net = netAfterFee(newPrice);
+  await markListed(listingId, newPrice, net); // refreshes price + listed_at
+  return { ok: true, detail: `Repriced **${listing.itemName}** to ${robux(newPrice)} (net ~${robux(net)}).` };
+}
+
+/** Cancels a listing and returns the copy to the held pool. */
+export async function cancelSale(listingId: string): Promise<ListResult> {
+  const listing = await getListing(listingId);
+  if (!listing) return { ok: false, detail: 'Listing not found.' };
+  if (listing.status !== 'listed') return { ok: false, detail: `Not currently listed (${listing.status}).` };
+
+  try {
+    const ok = await roblox.cancelResale(listing.itemId, listing.userAssetId);
+    if (!ok) return { ok: false, detail: 'Roblox rejected the cancel.' };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+  // Return it to 'held' so it can be re-listed later.
+  await query(
+    `UPDATE sale_listings SET status='held', list_price=NULL, net_estimate=NULL, listed_at=NULL, notified_at=NULL
+     WHERE id=$1`,
+    [listingId]
+  );
+  return { ok: true, detail: `Took **${listing.itemName}** off sale.` };
 }
 
 // ─── Unsold / sold watcher ───────────────────────────────────────────────────

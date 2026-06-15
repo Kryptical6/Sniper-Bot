@@ -224,6 +224,25 @@ class RobloxClient {
     return res.status === 200;
   }
 
+  /** Takes a copy off sale (cancels its resale listing). @returns true on success. */
+  async cancelResale(itemId: number, userAssetId: number): Promise<boolean> {
+    const collectibleItemId = await this.getCollectibleItemId(itemId);
+    const instanceId = await this.getCollectibleInstanceId(itemId, userAssetId);
+    if (!collectibleItemId || !instanceId) throw new Error('Could not resolve collectible ids for cancel');
+
+    const token = await this.ensureCsrf();
+    const url =
+      `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}` +
+      `/resellable-instance/${instanceId}/resale`;
+    const res = await this.http.delete(url, { headers: { 'X-CSRF-TOKEN': token } });
+    if (res.status === 403 && res.headers['x-csrf-token']) {
+      this.csrfToken = res.headers['x-csrf-token'];
+      const retry = await this.http.delete(url, { headers: { 'X-CSRF-TOKEN': this.csrfToken as string } });
+      return retry.status === 200 || retry.status === 204;
+    }
+    return res.status === 200 || res.status === 204;
+  }
+
   /** True if the given copy is still listed for sale (used by the unsold watcher). */
   async isStillListed(itemId: number, userAssetId: number): Promise<boolean> {
     const sellers = await this.getResellers(itemId, 100).catch(() => []);

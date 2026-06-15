@@ -125,7 +125,7 @@ export function sellDashboard(rows: SellRow[]): Panel {
   if (held.length) {
     const select = new StringSelectMenuBuilder()
       .setCustomId('s:sell:pick')
-      .setPlaceholder('Pick a held item to list for sale')
+      .setPlaceholder('List a held item for sale')
       .addOptions(held.slice(0, 25).map(r => ({
         label: r.listing.itemName.slice(0, 100) || String(r.listing.itemId),
         description: r.suggestion ? `suggest ${r.suggestion.listPrice} R$ · net ${r.suggestion.netProceeds}` : `cost ${r.listing.costRobux} R$`,
@@ -133,12 +133,63 @@ export function sellDashboard(rows: SellRow[]): Panel {
       })));
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select));
   }
+  if (listed.length) {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('s:sell:manage')
+      .setPlaceholder('Manage a listed item (reprice / cancel)')
+      .addOptions(listed.slice(0, 25).map(r => ({
+        label: r.listing.itemName.slice(0, 100) || String(r.listing.itemId),
+        description: `listed ${r.listing.listPrice} R$ · net ${r.listing.netEstimate}`,
+        value: r.listing.id,
+      })));
+    components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select));
+  }
   components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('s:sell:settings').setLabel('Sell settings').setStyle(ButtonStyle.Primary).setEmoji('⚙️'),
     new ButtonBuilder().setCustomId('s:sell').setLabel('Refresh').setStyle(ButtonStyle.Secondary).setEmoji('🔄'),
     new ButtonBuilder().setCustomId('s:back').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️'),
   ));
 
   return { embeds: [embed], components };
+}
+
+export function sellSettingsModal(cfg: SniperConfig): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId('s:sell:settings:modal')
+    .setTitle('Sell Settings')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('margin').setLabel('Target net profit margin (%)')
+          .setStyle(TextInputStyle.Short).setRequired(false).setValue(String(cfg.sellDefaultMarginPct)),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('unsold_hours').setLabel('Nag if unsold after (hours)')
+          .setStyle(TextInputStyle.Short).setRequired(false).setValue(String(cfg.unsoldNotifyHours)),
+      ),
+    );
+}
+
+/** Reprice/cancel action buttons for a chosen listed item. */
+export function manageListingButtons(listingId: string): Panel {
+  const embed = new EmbedBuilder().setColor(colors.info).setTitle('🏷️ Manage listing')
+    .setDescription('Choose an action for this listed item.');
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`s:sell:reprice:${listingId}`).setLabel('Reprice').setStyle(ButtonStyle.Primary).setEmoji('🏷️'),
+    new ButtonBuilder().setCustomId(`s:sell:cancel:${listingId}`).setLabel('Take off sale').setStyle(ButtonStyle.Danger).setEmoji('🗑️'),
+  );
+  return { embeds: [embed], components: [row] };
+}
+
+export function repriceModal(listingId: string, itemName: string, current: number): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`s:sell:reprice:modal:${listingId}`)
+    .setTitle(`Reprice: ${itemName}`.slice(0, 45))
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('price').setLabel('New list price (R$)')
+          .setStyle(TextInputStyle.Short).setRequired(true).setValue(String(current)),
+      ),
+    );
 }
 
 export function sellPriceModal(listingId: string, itemName: string, suggested: number): ModalBuilder {

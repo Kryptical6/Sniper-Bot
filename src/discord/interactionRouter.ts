@@ -13,19 +13,24 @@ import { log } from '../utils/logger';
 import {
   getConfig, setConfig, getTodaysApproval, setApprovalStatus, ensureTodaysApprovalRow,
   addWatch, removeWatch, listWatch, getStats, getHoldings, getListing, getRealizedPnl,
+  listAds, getAd, upsertAd, removeAd, toggleAdAuto,
 } from '../db/helpers';
 import { buyResultEmbed, missedEmbed, robux } from './embeds';
 import {
   snipeDashboard, settingsModal, watchlistView, watchAddModal, watchRemoveModal,
-  feedDashboard, sellDashboard, sellPriceModal, SellRow, parseNum,
+  feedDashboard, sellDashboard, sellPriceModal, sellSettingsModal,
+  manageListingButtons, repriceModal, SellRow, parseNum,
 } from './dashboards';
 import { roblox } from '../roblox/client';
 import { rolimons } from '../roblox/rolimons';
 import { computeRecommendations, buildRecommendEmbed } from '../services/recommendService';
 import { executeBuy } from '../services/buyService';
-import { listSale } from '../services/sellService';
+import { listSale, repriceSale, cancelSale } from '../services/sellService';
 import { suggestSellPrice } from '../services/scoring';
 import { pendingPrompts } from '../services/snipeEngine';
+import { adDashboard, adActionButtons, adAddModal } from './adDashboard';
+import { postAd, cooldownRemainingMs } from '../services/adService';
+import { AD_TAGS, AdTag } from '../roblox/rolimons';
 
 export async function handleInteraction(i: Interaction): Promise<void> {
   if (i.user.id !== config.discord.ownerId) {
@@ -72,10 +77,16 @@ async function buildSellPayload() {
   return sellDashboard(rows);
 }
 
+async function buildAdPayload() {
+  const [ads, cd] = await Promise.all([listAds(), cooldownRemainingMs()]);
+  return adDashboard(ads, cd, Boolean(config.rolimons.token));
+}
+
 // ─── Slash commands ──────────────────────────────────────────────────────────
 async function handleCommand(i: ChatInputCommandInteraction): Promise<void> {
   if (i.commandName === 'snipe') return void i.reply({ ...(await buildSnipePayload()), ephemeral: true });
   if (i.commandName === 'feed')  return void i.reply({ ...(await buildFeedPayload()), ephemeral: true });
+  if (i.commandName === 'rolimons-ad') return void i.reply({ ...(await buildAdPayload()), ephemeral: true });
 }
 
 // ─── Buttons ─────────────────────────────────────────────────────────────────
@@ -94,6 +105,38 @@ async function handleButton(i: ButtonInteraction): Promise<void> {
 
   // Snipe alert buy/skip (customId: buy|skip:<itemId>:<userAssetId>)
   if (id.startsWith('buy:') || id.startsWith('skip:')) return handleBuySkip(i);
+
+  // Sell management (dynamic customIds carrying a listing id)
+  if (id === 's:sell:settings') return void i.showModal(sellSettingsModal(await getConfig()));
+  if (id.startsWith('s:sell:reprice:') && !id.includes(':modal:')) {
+    const listingId = id.slice('s:sell:reprice:'.length);
+    const l = await getListing(listingId);
+    if (!l) return void i.reply({ content: '⚠️ Listing not found.', ephemeral: true });
+    return void i.showModal(repriceModal(listingId, l.itemName, l.listPrice ?? 0));
+  }
+  if (id.startsWith('s:sell:cancel:')) {
+    const listingId = id.slice('s:sell:cancel:'.length);
+    await i.deferReply({ ephemeral: true });
+    const r = await cancelSale(listingId);
+    return void i.editReply(r.detail);
+  }
+
+  // Rolimons ad dashboard
+  if (id === 'r:add') return void i.showModal(adAddModal());
+  if (id === 'r:refresh') return void i.update(await buildAdPayload());
+  if (id.startsWith('r:post:')) {
+    await i.deferReply({ ephemeral: true });
+    const r = await postAd(id.slice('r:post:'.length));
+    return void i.editReply(r.detail);
+  }
+  if (id.startsWith('r:auto:')) {
+    const on = await toggleAdAuto(id.slice('r:auto:'.length));
+    return void i.reply({ content: on ? '🔁 Auto re-advertise **enabled**.' : '⏸️ Auto re-advertise **disabled**.', ephemeral: true });
+  }
+  if (id.startsWith('r:rm:')) {
+    await removeAd(id.slice('r:rm:'.length));
+    return void i.reply({ content: '🗑️ Ad removed.', ephemeral: true });
+  }
 
   // ── Snipe dashboard ──
   switch (id) {
@@ -217,6 +260,23 @@ async function handleModal(i: ModalSubmitInteraction): Promise<void> {
     return refreshFromModal(i, watchlistView(await listWatch()));
   }
 
+  if (i.customId === 's:sell:settings:modal') {
+    const margin = parseNum(i.fields.getTextInputValue('margin'));
+    const unsold = parseNum(i.fields.getTextInputValue('unsold_hours'));
+    if (margin !== undefined) await setConfig('sellDefaultMarginPct', clamp(margin, 0, 1000));
+    if (unsold !== undefined) await setConfig('unsoldNotifyHours', Math.max(1, unsold));
+    return void i.reply({ content: '✅ Sell settings saved.', ephemeral: true });
+  }
+
+  if (i.customId.startsWith('s:sell:reprice:modal:')) {
+    const listingId = i.customId.slice('s:sell:reprice:modal:'.length);
+    const price = parseNum(i.fields.getTextInputValue('price'));
+    if (price === undefined || price < 1) return void i.reply({ content: '⚠️ Invalid price.', ephemeral: true });
+    await i.deferReply({ ephemeral: true });
+    const r = await repriceSale(listingId, price);
+    return void i.editReply(r.detail);
+  }
+
   if (i.customId.startsWith('s:sell:modal:')) {
     const listingId = i.customId.slice('s:sell:modal:'.length);
     const price = parseNum(i.fields.getTextInputValue('price'));
@@ -225,7 +285,23 @@ async function handleModal(i: ModalSubmitInteraction): Promise<void> {
     }
     await i.deferReply({ ephemeral: true });
     const result = await listSale(listingId, price);
-    await i.editReply(result.detail);
+    return void i.editReply(result.detail);
+  }
+
+  if (i.customId === 'r:add:modal') {
+    const offerId = parseNum(i.fields.getTextInputValue('offer_id'));
+    if (offerId === undefined) return void i.reply({ content: '⚠️ Invalid offer item ID.', ephemeral: true });
+
+    const requestIds = (i.fields.getTextInputValue('request_ids') || '')
+      .split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0).slice(0, 4);
+    const validTags = new Set<string>(AD_TAGS as readonly string[]);
+    const requestTags = (i.fields.getTextInputValue('request_tags') || '')
+      .split(',').map(s => s.trim().toLowerCase()).filter(t => validTags.has(t)).slice(0, 4) as AdTag[];
+
+    await rolimons.refresh();
+    const name = rolimons.get(offerId)?.name ?? '';
+    await upsertAd({ offerItemId: offerId, offerItemName: name, requestItemIds: requestIds, requestTags });
+    return void i.reply({ content: `✅ Saved ad for **${name || offerId}** (request: ${requestIds.length} item(s), tags: ${requestTags.join(', ') || 'none'}).`, ephemeral: true });
   }
 }
 
@@ -242,6 +318,18 @@ async function handleStringSelect(i: StringSelectMenuInteraction): Promise<void>
     const cfg = await getConfig();
     const { listPrice } = suggestSellPrice(listing.costRobux, cfg.sellDefaultMarginPct, rap);
     return void i.showModal(sellPriceModal(listingId, listing.itemName, listPrice));
+  }
+  if (i.customId === 's:sell:manage') {
+    const listing = await getListing(i.values[0]);
+    if (!listing || listing.status !== 'listed') {
+      return void i.reply({ content: '⚠️ That listing is no longer active.', ephemeral: true });
+    }
+    return void i.reply({ ...manageListingButtons(listing.id), ephemeral: true });
+  }
+  if (i.customId === 'r:pick') {
+    const ad = await getAd(i.values[0]);
+    if (!ad) return void i.reply({ content: '⚠️ Ad entry not found.', ephemeral: true });
+    return void i.reply({ ...adActionButtons(ad), ephemeral: true });
   }
 }
 

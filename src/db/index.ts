@@ -135,6 +135,20 @@ export async function initDb(): Promise<void> {
       posted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
 
+  // Rolimons trade-ad watchlist. Each row = one offer item + its request side.
+  await query(`
+    CREATE TABLE IF NOT EXISTS rolimons_ads (
+      id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      offer_item_id    BIGINT      NOT NULL,
+      offer_item_name  TEXT        NOT NULL DEFAULT '',
+      request_item_ids BIGINT[]    NOT NULL DEFAULT '{}',
+      request_tags     TEXT[]      NOT NULL DEFAULT '{}',
+      auto_readvertise BOOLEAN     NOT NULL DEFAULT FALSE,
+      last_posted_at   TIMESTAMPTZ,
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rolimons_ads_offer ON rolimons_ads(offer_item_id)`);
+
   // Recommendation snapshots so we can throttle repeat alerts.
   await query(`
     CREATE TABLE IF NOT EXISTS recommendations (

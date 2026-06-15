@@ -15,4 +15,8 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('feed')
     .setDescription('Open the new-limiteds feed dashboard'),
+
+  new SlashCommandBuilder()
+    .setName('rolimons-ad')
+    .setDescription('Manage Rolimons trade ads'),
 ];

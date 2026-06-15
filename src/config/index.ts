@@ -26,6 +26,10 @@ export const config = {
     cookie: req('ROBLOSECURITY'),
     userId: req('ROBLOX_USER_ID'),
   },
+  rolimons: {
+    // _RoliVerification cookie — optional; trade-ad posting is disabled without it.
+    token: process.env.ROLIMONS_TOKEN || undefined,
+  },
   poll: {
     intervalSeconds: parseInt(opt('POLL_INTERVAL_SECONDS', '15'), 10),
     // jitter applied as a fraction of the base interval (±30%)

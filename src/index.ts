@@ -13,6 +13,7 @@ import { startSnipeEngine } from './services/snipeEngine';
 import { startFeedService } from './services/feedService';
 import { startRecommendAlerts } from './services/recommendService';
 import { startSellWatcher } from './services/sellService';
+import { startAdRotation } from './services/adService';
 import { startDailyApprovalScheduler } from './scheduler/dailyApproval';
 
 async function main(): Promise<void> {
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
     startFeedService();
     startRecommendAlerts();
     startSellWatcher();
+    startAdRotation();
     startDailyApprovalScheduler();
   });
 

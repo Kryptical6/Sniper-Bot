@@ -316,6 +316,75 @@ export async function getRealizedPnl(): Promise<{ sold: number; proceeds: number
   return { sold: rows[0].sold, proceeds: rows[0].proceeds, cost: rows[0].cost };
 }
 
+// ─── Rolimons trade ads ──────────────────────────────────────────────────────
+export interface AdEntry {
+  id: string;
+  offerItemId: number;
+  offerItemName: string;
+  requestItemIds: number[];
+  requestTags: string[];
+  autoReadvertise: boolean;
+  lastPostedAt: Date | null;
+}
+
+function mapAd(r: any): AdEntry {
+  return {
+    id: r.id,
+    offerItemId: Number(r.offer_item_id),
+    offerItemName: r.offer_item_name,
+    requestItemIds: (r.request_item_ids ?? []).map((x: any) => Number(x)),
+    requestTags: r.request_tags ?? [],
+    autoReadvertise: r.auto_readvertise,
+    lastPostedAt: r.last_posted_at ? new Date(r.last_posted_at) : null,
+  };
+}
+
+export async function upsertAd(a: {
+  offerItemId: number; offerItemName: string;
+  requestItemIds: number[]; requestTags: string[];
+}): Promise<void> {
+  await query(
+    `INSERT INTO rolimons_ads (offer_item_id, offer_item_name, request_item_ids, request_tags)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (offer_item_id) DO UPDATE SET
+       offer_item_name = COALESCE(NULLIF($2,''), rolimons_ads.offer_item_name),
+       request_item_ids = $3, request_tags = $4`,
+    [a.offerItemId, a.offerItemName, a.requestItemIds, a.requestTags]
+  );
+}
+
+export async function removeAd(id: string): Promise<void> {
+  await query(`DELETE FROM rolimons_ads WHERE id = $1`, [id]);
+}
+
+export async function listAds(): Promise<AdEntry[]> {
+  const { rows } = await query(`SELECT * FROM rolimons_ads ORDER BY created_at`);
+  return rows.map(mapAd);
+}
+
+export async function getAd(id: string): Promise<AdEntry | null> {
+  const { rows } = await query(`SELECT * FROM rolimons_ads WHERE id = $1`, [id]);
+  return rows[0] ? mapAd(rows[0]) : null;
+}
+
+export async function toggleAdAuto(id: string): Promise<boolean> {
+  const { rows } = await query(
+    `UPDATE rolimons_ads SET auto_readvertise = NOT auto_readvertise WHERE id = $1 RETURNING auto_readvertise`,
+    [id]
+  );
+  return rows[0]?.auto_readvertise ?? false;
+}
+
+export async function markAdPosted(id: string): Promise<void> {
+  await query(`UPDATE rolimons_ads SET last_posted_at = NOW() WHERE id = $1`, [id]);
+}
+
+/** Most recent post time across all ads (for the global 15-min cooldown). */
+export async function lastAdPostTime(): Promise<Date | null> {
+  const { rows } = await query(`SELECT MAX(last_posted_at) AS t FROM rolimons_ads`);
+  return rows[0]?.t ? new Date(rows[0].t) : null;
+}
+
 export async function recentHistory(limit: number) {
   const { rows } = await query(
     `SELECT item_name, listed_price, rap_at_time, discount_percent, outcome, reason, created_at
