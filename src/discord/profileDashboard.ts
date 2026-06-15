@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import { RoliItem } from '../types';
 import { priceOutlook } from '../services/scoring';
+import { profitPossibility, sellGuidance } from '../services/analysis';
 import { Panel } from './dashboards';
 import { colors, robux, itemUrl } from './embeds';
 
@@ -51,8 +52,8 @@ export function profileDashboard(p: ProfileSummary): Panel {
 // ─── Inventory view ──────────────────────────────────────────────────────────
 const demandStars = (d: number) => (d < 0 ? 'Unrated' : '⭐'.repeat(d) + '☆'.repeat(4 - d));
 
-export function inventoryView(rows: InventoryRow[], page = 0): Panel {
-  const PER = 8;
+export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): Panel {
+  const PER = 6;
   const pages = Math.max(1, Math.ceil(rows.length / PER));
   const clamped = Math.min(Math.max(0, page), pages - 1);
   const slice = rows.slice(clamped * PER, clamped * PER + PER);
@@ -68,14 +69,27 @@ export function inventoryView(rows: InventoryRow[], page = 0): Panel {
   } else {
     for (const r of slice) {
       const pl = r.cost != null ? r.rap - r.cost : null;
+      // Profit possibility: sell at projected value (or RAP) vs what we paid
+      // (or RAP if cost unknown), fee-aware.
+      const target = r.meta && r.meta.value > 0 ? r.meta.value : r.rap;
+      const basis = r.cost ?? r.rap;
+      const poss = profitPossibility(basis, target);
+      const sell = sellGuidance({ meta: r.meta, rap: r.rap, cost: r.cost, marginPct });
+      const lines = [
+        `**RAP** ${robux(r.rap)}  ·  **Demand** ${demandStars(r.meta?.demand ?? -1)}`,
+        `**Outlook** ${priceOutlook(r.meta)}`,
+      ];
+      if (r.cost != null) {
+        lines.push(`**Bought** ${robux(r.cost)}  ·  **Unrealised** ${pl! >= 0 ? '+' : ''}${robux(pl!)}`);
+      }
+      lines.push(`**Profit potential** ${poss.label}  (${poss.pct >= 0 ? '+' : ''}${poss.pct}% at ${robux(target)})`);
+      lines.push(`**Sell** ~${robux(sell.suggestedPrice)} → net ${robux(sell.net)}`);
+      lines.push(`${sell.advice}`);
+      lines.push(`[View on Roblox](${itemUrl(r.assetId)})`);
+
       embed.addFields({
-        name: r.name.slice(0, 100),
-        value:
-          `RAP ${robux(r.rap)} · Demand ${demandStars(r.meta?.demand ?? -1)} · ${priceOutlook(r.meta)}` +
-          (r.cost != null
-            ? `\nBought ${robux(r.cost)} · unrealised ${pl! >= 0 ? '+' : ''}${robux(pl!)}`
-            : '') +
-          `\n[View](${itemUrl(r.assetId)})`,
+        name: `🔹 ${r.name}`.slice(0, 100),
+        value: lines.join('\n'),
         inline: false,
       });
     }
@@ -124,8 +138,8 @@ export function historyEmbed(rows: HistoryRow[]): Panel {
     return `📦 **${r.itemName}** — bought ${robux(r.cost)} · held`;
   });
 
-  embed.setDescription(lines.join('\n').slice(0, 4000));
-  embed.addFields({ name: 'Realised profit (sold)', value: `${realized >= 0 ? '+' : ''}${robux(realized)}`, inline: false });
+  embed.setDescription(lines.slice(0, 20).join('\n\n').slice(0, 4000));
+  embed.addFields({ name: '— Realised profit (sold) —', value: `**${realized >= 0 ? '+' : ''}${robux(realized)}**`, inline: false });
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('p:back').setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('⬅️'),
   );

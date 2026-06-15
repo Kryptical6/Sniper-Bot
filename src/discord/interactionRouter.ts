@@ -35,6 +35,8 @@ import { AD_TAGS, AdTag } from '../roblox/rolimons';
 import {
   profileDashboard, inventoryView, historyEmbed, InventoryRow,
 } from './profileDashboard';
+import { analyzeItem } from '../services/analysis';
+import { searchEmbed, noMatchEmbed, SearchMatch } from './searchDashboard';
 
 export async function handleInteraction(i: Interaction): Promise<void> {
   if (i.user.id !== config.discord.ownerId) {
@@ -102,6 +104,40 @@ async function loadInventory(): Promise<InventoryRow[]> {
   }));
 }
 
+/** Analyses one item id and renders the search embed (with optional matches). */
+async function buildItemAnalysis(itemId: number, matches: SearchMatch[] = []) {
+  await rolimons.refresh();
+  const meta = rolimons.get(itemId);
+  const [detail, resellers] = await Promise.all([
+    roblox.getResaleDetail(itemId).catch(() => null),
+    roblox.getResellers(itemId, 1).catch(() => []),
+  ]);
+  const rap = detail?.rap ?? meta?.rap ?? 0;
+  const name = meta?.name ?? `Item ${itemId}`;
+  const analysis = analyzeItem({
+    meta,
+    rap,
+    lowestPrice: resellers[0]?.price ?? null,
+    recentPrices: detail?.recentPrices ?? [],
+  });
+  return searchEmbed(name, itemId, analysis, matches);
+}
+
+/** Resolves a free-text query to an item id (+ alternative matches). */
+async function resolveQuery(query: string): Promise<{ id: number | null; matches: SearchMatch[] }> {
+  await rolimons.refresh();
+  const trimmed = query.trim();
+  if (/^\d+$/.test(trimmed)) return { id: Number(trimmed), matches: [] };
+
+  const q = trimmed.toLowerCase();
+  const hits = rolimons.all()
+    .filter(i => i.name.toLowerCase().includes(q) || i.acronym.toLowerCase() === q)
+    .sort((a, b) => b.rap - a.rap)
+    .slice(0, 25)
+    .map(i => ({ id: i.id, name: i.name, rap: i.rap }));
+  return { id: hits[0]?.id ?? null, matches: hits };
+}
+
 async function buildProfilePayload() {
   await rolimons.refresh();
   const [me, balance, inv] = await Promise.all([
@@ -131,6 +167,13 @@ async function handleCommand(i: ChatInputCommandInteraction): Promise<void> {
   if (i.commandName === 'history') {
     await i.deferReply({ ephemeral: true });
     return void i.editReply(historyEmbed(await getTradeHistory(25)));
+  }
+  if (i.commandName === 'search') {
+    await i.deferReply({ ephemeral: true });
+    const query = i.options.getString('query', true);
+    const { id, matches } = await resolveQuery(query);
+    if (id == null) return void i.editReply(noMatchEmbed(query));
+    return void i.editReply(await buildItemAnalysis(id, matches));
   }
 }
 
@@ -191,7 +234,8 @@ async function handleButton(i: ButtonInteraction): Promise<void> {
   if (id === 'p:inventory' || id.startsWith('p:inv:')) {
     const page = id.startsWith('p:inv:') ? Number(id.slice('p:inv:'.length)) || 0 : 0;
     await i.deferUpdate();
-    return void i.editReply(inventoryView(await loadInventory(), page));
+    const [inv, cfg] = await Promise.all([loadInventory(), getConfig()]);
+    return void i.editReply(inventoryView(inv, page, cfg.sellDefaultMarginPct));
   }
   if (id === 'p:history') {
     await i.deferUpdate();
@@ -390,6 +434,10 @@ async function handleStringSelect(i: StringSelectMenuInteraction): Promise<void>
     const ad = await getAd(i.values[0]);
     if (!ad) return void i.reply({ content: '⚠️ Ad entry not found.', ephemeral: true });
     return void i.reply({ ...adActionButtons(ad), ephemeral: true });
+  }
+  if (i.customId === 'q:pick') {
+    await i.deferUpdate();
+    return void i.editReply(await buildItemAnalysis(Number(i.values[0])));
   }
 }
 

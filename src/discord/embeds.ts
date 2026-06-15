@@ -124,17 +124,15 @@ export function recommendEmbed(
   if (picks.length === 0) {
     embed.setDescription(`Balance: **${R(balance)}**\n\nNothing meets the bar right now.`);
   }
-  for (const p of picks.slice(0, 8)) {
+  picks.slice(0, 8).forEach((p, idx) => {
     embed.addFields({
-      name: `${buyTag(p.breakdown.total)}  ${p.item.name} — ${p.breakdown.total.toFixed(0)}/100`,
+      name: `${idx + 1}. ${buyTag(p.breakdown.total)}  ${p.item.name}  ·  ${p.breakdown.total.toFixed(0)}/100`,
       value:
-        `Price ${R(p.price)} · Proj ${R(p.item.value > 0 ? p.item.value : p.item.rap)} · ` +
-        `Demand ${demandStars(p.item.demand)}\n` +
-        `ROI ${p.breakdown.roi} · Activity ${p.breakdown.activity} · ` +
-        `[View](${itemUrl(p.item.id)})`,
+        `**Price** ${R(p.price)} **Proj** ${R(p.item.value > 0 ? p.item.value : p.item.rap)} **Demand** ${demandStars(p.item.demand)}\n` +
+        `**ROI** ${p.breakdown.roi} **Activity** ${p.breakdown.activity} [View ↗](${itemUrl(p.item.id)})`,
       inline: false,
     });
-  }
+  });
   return { embeds: [embed] };
 }
 

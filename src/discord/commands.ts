@@ -27,4 +27,10 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('history')
     .setDescription('Items you have bought and sold'),
+
+  new SlashCommandBuilder()
+    .setName('search')
+    .setDescription('Look up a limited by ID or name and analyse it')
+    .addStringOption(o =>
+      o.setName('query').setDescription('Item ID, or a name/keyword').setRequired(true)),
 ];

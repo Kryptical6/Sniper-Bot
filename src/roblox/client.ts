@@ -134,6 +134,17 @@ class RobloxClient {
     return res.data?.ProductId ?? res.data?.productId ?? null;
   }
 
+  /** Fuller resale detail: RAP plus the most recent sale price points. */
+  async getResaleDetail(itemId: number): Promise<{ rap: number; recentPrices: number[] } | null> {
+    const url = `https://economy.roblox.com/v1/assets/${itemId}/resale-data`;
+    const res = await this.backoffGet(url);
+    if (res.status !== 200) return null;
+    const points: number[] = Array.isArray(res.data?.priceDataPoints)
+      ? res.data.priceDataPoints.map((p: any) => p.value).filter((v: any) => typeof v === 'number')
+      : [];
+    return { rap: res.data.recentAveragePrice ?? 0, recentPrices: points.slice(-6).reverse() };
+  }
+
   // ─── Resellers (live listings, cheapest first) ──────────────────────────────
   async getResellers(itemId: number, limit = 10): Promise<Listing[]> {
     const url =

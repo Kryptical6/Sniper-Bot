@@ -39,7 +39,7 @@ export function adDashboard(ads: AdEntry[], cooldownMs: number, tokenSet: boolea
       inline: false,
     })));
   } else {
-    embed.addFields({ name: '​', value: '_No ad entries yet. Add one below._' });
+    embed.addFields({ name: 'Ads', value: '_No ad entries yet. Add one below._' });
   }
 
   const components: ActionRowBuilder<any>[] = [];
