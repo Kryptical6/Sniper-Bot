@@ -19,6 +19,7 @@ import { roblox } from '../roblox/client';
 import { rolimons } from '../roblox/rolimons';
 import {
   getConfig, getTodaysApproval, listWatch, getWatchFloorMap, recordAttempt,
+  updateAttemptOutcome,
 } from '../db/helpers';
 import { scoreItem, blendedValue } from './scoring';
 import { snipeAlertEmbed } from '../discord/embeds';
@@ -132,6 +133,7 @@ async function tick(): Promise<void> {
     const breakdown = scoreItem(cheapest.price, meta, balance, resale?.sales ?? 0);
 
     const candidate: SnipeCandidate = {
+      promptedAt: Date.now(),
       itemId,
       name: meta.name,
       listing: cheapest,
@@ -152,7 +154,7 @@ async function promptOwner(c: SnipeCandidate, spentToday: number, cap: number): 
     listedPrice: c.listing.price, rapAtTime: c.rap, projectedAtTime: c.projectedValue,
     discountPercent: c.discountPercent, score: c.score, outcome: 'prompted',
   });
-  (c as any).attemptId = attemptId;
+  c.attemptId = attemptId;
 
   pendingPrompts.set(c.listing.userAssetId, c);
   const msg = await dmOwner(snipeAlertEmbed(c, spentToday, cap));
@@ -160,7 +162,27 @@ async function promptOwner(c: SnipeCandidate, spentToday: number, cap: number): 
     pendingPrompts.delete(c.listing.userAssetId);
     return;
   }
+  void armPromptTimeout(c, msg);
   log.info('SNIPE', `Prompted owner: ${c.name} @ ${c.listing.price} (${c.discountPercent}% under RAP)`);
+}
+
+async function armPromptTimeout(
+  c: SnipeCandidate,
+  msg: Awaited<ReturnType<typeof dmOwner>>
+): Promise<void> {
+  const cfg = await getConfig().catch(() => null);
+  const timeoutSeconds = cfg?.confirmTimeoutSeconds;
+  if (!timeoutSeconds || timeoutSeconds <= 0) return;
+
+  setTimeout(() => {
+    const current = pendingPrompts.get(c.listing.userAssetId);
+    if (!current || current.attemptId !== c.attemptId) return;
+    pendingPrompts.delete(c.listing.userAssetId);
+    if (c.attemptId) {
+      void updateAttemptOutcome(c.attemptId, 'expired', `No confirmation within ${timeoutSeconds}s`);
+    }
+    void msg?.edit({ content: '⌛ Snipe expired.', embeds: [], components: [] }).catch(() => {});
+  }, timeoutSeconds * 1000);
 }
 
 function sampleArray<T>(arr: T[], n: number): T[] {

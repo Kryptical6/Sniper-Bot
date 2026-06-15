@@ -56,11 +56,6 @@ async function scan(): Promise<void> {
   for (const it of rolimons.all()) {
     if (await alreadyPosted(it.id)) continue;
 
-    // Filter by feed scope (events / ugc toggles). RoliMons doesn't expose a
-    // clean type flag, so we use 'rare'/'hyped' heuristics conservatively and
-    // default to posting unless a toggle explicitly excludes.
-    // (Kept permissive; refine with catalog metadata if needed.)
-
     const listings = await roblox.getResellers(it.id, 1).catch(() => []);
     const price = listings[0]?.price ?? null;
 

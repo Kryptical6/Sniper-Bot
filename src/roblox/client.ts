@@ -317,10 +317,25 @@ class RobloxClient {
     return res.status === 200 || res.status === 204;
   }
 
-  /** True if the given copy is still listed for sale (used by the unsold watcher). */
-  async isStillListed(itemId: number, userAssetId: number): Promise<boolean> {
-    const sellers = await this.getResellers(itemId, 100).catch(() => []);
-    return sellers.some(s => s.userAssetId === userAssetId);
+  /**
+   * True if the given copy is still listed for sale (used by the unsold watcher).
+   * Pages beyond the cheapest 100 so an expensive listing is not mistaken for a
+   * completed sale just because it is buried below cheaper copies.
+   */
+  async isStillListed(itemId: number, userAssetId: number, maxPages = 10): Promise<boolean> {
+    let cursor = '';
+    for (let page = 0; page < maxPages; page++) {
+      const url =
+        `https://economy.roblox.com/v1/assets/${itemId}/resellers?limit=100&cursor=${encodeURIComponent(cursor)}`;
+      const res = await this.backoffGet(url);
+      if (res.status !== 200 || !Array.isArray(res.data?.data)) return true;
+      if (res.data.data.some((d: any) => d.userAssetId === userAssetId)) return true;
+      cursor = res.data.nextPageCursor ?? '';
+      if (!cursor) return false;
+      await sleep(250);
+    }
+    // Unknown after the page limit: prefer not marking it sold incorrectly.
+    return true;
   }
 
   // ─── Internal: GET with 429 backoff ─────────────────────────────────────────

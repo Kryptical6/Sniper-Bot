@@ -14,6 +14,7 @@ function opt(key: string, fallback: string): string {
 }
 
 export const config = {
+  dryRun: opt('DRY_RUN', 'false').toLowerCase() === 'true',
   discord: {
     token: req('DISCORD_TOKEN'),
     clientId: req('DISCORD_CLIENT_ID'),

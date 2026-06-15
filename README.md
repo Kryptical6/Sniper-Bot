@@ -17,10 +17,12 @@ after you click **Buy**.
    prompt. Until you press **Approve**, nothing is scanned or bought. No reply =
    full pause.
 2. **Per-snipe confirmation** — every snipe waits for an explicit **Buy** click.
-   No timeout by default; enable one with `/snipe set-timeout`.
+   No timeout by default; set one from the `/snipe` settings panel.
 3. **Daily cap** — hard spend ceiling per day (default **1,000 R$**).
 4. **Per-item cap** — items above it are skipped before you're even prompted.
-5. **Kill switch** — `/snipe pause` stops everything instantly.
+5. **Kill switch** — the `/snipe` dashboard pause button stops everything instantly.
+6. **Dry run** — set `DRY_RUN=true` to exercise scanning and Discord flows
+   without sending purchase requests to Roblox.
 
 Every guard is re-checked at click time, and the listing is re-validated (still
 live, same price) before the purchase fires.
@@ -32,7 +34,8 @@ live, same price) before the purchase fires.
    - `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OWNER_ID` (your Discord user id)
    - `DATABASE_URL` (Railway Postgres)
    - `ROBLOSECURITY` (your `.ROBLOSECURITY` cookie), `ROBLOX_USER_ID`
-   - `FEED_CHANNEL_ID` (optional; can also set via `/feed set-channel`)
+   - `FEED_CHANNEL_ID` (optional; can also set from `/feed`)
+   - `DRY_RUN=true` while testing, if you do not want real purchases sent
 3. `npm run register` — register slash commands (set `DEV_GUILD_ID` for instant
    registration during development).
 4. `npm run build && npm start` (or `npm run dev`).
@@ -41,17 +44,13 @@ live, same price) before the purchase fires.
 
 | Command | Purpose |
 | --- | --- |
-| `/snipe config` / `status` | View settings / today's state |
-| `/snipe enable` / `disable` / `pause` / `resume` | Master controls |
-| `/snipe set-daily-cap` / `set-item-cap` | Spend limits |
-| `/snipe set-threshold` / `set-floor` | Trigger criteria (% below RAP / price floor) |
-| `/snipe set-timeout` | Per-snipe confirm timeout (0 = forever) |
-| `/snipe watch` / `unwatch` / `watchlist` | Priority item watchlist |
-| `/balance` | Live Robux + today's spend |
-| `/recommend` | Top scored picks right now |
-| `/stats [today\|week\|all]` | Spend, win rate, value acquired |
-| `/history [limit]` | Recent snipe attempts |
-| `/feed set-channel` / `toggle-events` / `toggle-ugc` | New-limiteds feed |
+| `/snipe` | Central sniper dashboard: enable/pause, settings, watchlist, sell flow, recommendations, stats |
+| `/feed` | New-limiteds feed dashboard and channel selection |
+| `/profile` | Account balance, RAP, inventory, sell guidance, and history |
+| `/search` | Analyze a limited by item ID or name |
+| `/trade` | Evaluate a trade by blended RoliMons value/RAP/demand |
+| `/alert` | Manage one-shot buy/sell price target alerts |
+| `/history` | Quick trade history shortcut |
 
 ## Deploy (Railway)
 

@@ -15,6 +15,7 @@ import {
   addWatch, removeWatch, listWatch, getStats, getHoldings, getListing, getRealizedPnl,
   getCostByItem, getTradeHistory,
   addAlert, listAlerts, removeAlert,
+  updateAttemptOutcome,
 } from '../db/helpers';
 import { buyResultEmbed, missedEmbed, robux } from './embeds';
 import {
@@ -334,6 +335,7 @@ async function handleBuySkip(i: ButtonInteraction): Promise<void> {
 
   if (action === 'skip') {
     pendingPrompts.delete(uaid);
+    if (candidate?.attemptId) await updateAttemptOutcome(candidate.attemptId, 'skipped', 'Owner skipped prompt');
     return void i.update({ content: '❌ Skipped.', embeds: [], components: [] });
   }
   if (!candidate) {

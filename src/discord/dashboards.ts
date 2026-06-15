@@ -14,6 +14,7 @@ import { SniperConfig, SaleListing } from '../types';
 import { WatchEntry } from '../db/helpers';
 import { SellSuggestion } from '../services/scoring';
 import { colors, robux } from './embeds';
+import { config } from '../config';
 
 /**
  * A panel payload usable by both interaction.reply (add `ephemeral`) and
@@ -35,6 +36,7 @@ export function snipeDashboard(
   watchCount: number,
 ): Panel {
   const state = cfg.paused ? '⏸️ Paused' : cfg.enabled ? '🟢 Auto-buy ON' : '⚪ Auto-buy OFF';
+  const mode = config.dryRun ? ' · DRY RUN' : '';
   const approval =
     approvalStatus === 'approved' ? '✅ Approved today'
     : approvalStatus === 'paused' ? '❌ Paused today'
@@ -45,7 +47,7 @@ export function snipeDashboard(
   const embed = new EmbedBuilder()
     .setColor(cfg.paused ? colors.bad : cfg.enabled ? colors.good : colors.info)
     .setTitle('🎯 Sniper Control')
-    .setDescription(`**${state}**  ·  ${approval}`)
+    .setDescription(`**${state}${mode}**  ·  ${approval}`)
     .addFields(
       { name: 'Daily spend', value: `${spendBar}\n${robux(spentToday)} / ${robux(cfg.dailyCapRobux)}`, inline: false },
       { name: 'Balance', value: balance == null ? '⚠️ unavailable' : robux(balance), inline: true },
@@ -282,10 +284,6 @@ export function feedDashboard(cfg: SniperConfig): Panel {
     .setDescription(cfg.feedChannelId
       ? `Posting new limiteds to <#${cfg.feedChannelId}>.`
       : 'No channel set yet — pick one below.')
-    .addFields(
-      { name: 'Event limiteds', value: cfg.feedIncludeEvents ? '🟢 Included' : '⚪ Excluded', inline: true },
-      { name: 'UGC limiteds', value: cfg.feedIncludeUgc ? '🟢 Included' : '⚪ Excluded', inline: true },
-    )
     .setTimestamp();
 
   const channelRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
@@ -294,12 +292,6 @@ export function feedDashboard(cfg: SniperConfig): Panel {
       .addChannelTypes(ChannelType.GuildText),
   );
   const toggleRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('f:events')
-      .setLabel(cfg.feedIncludeEvents ? 'Exclude events' : 'Include events')
-      .setStyle(ButtonStyle.Secondary).setEmoji('🎉'),
-    new ButtonBuilder().setCustomId('f:ugc')
-      .setLabel(cfg.feedIncludeUgc ? 'Exclude UGC' : 'Include UGC')
-      .setStyle(ButtonStyle.Secondary).setEmoji('🧩'),
     new ButtonBuilder().setCustomId('f:refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary).setEmoji('🔄'),
   );
 

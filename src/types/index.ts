@@ -57,6 +57,8 @@ export interface Listing {
 
 /** A scored snipe candidate ready for a buy decision. */
 export interface SnipeCandidate {
+  attemptId?: string;
+  promptedAt: number;
   itemId: number;
   name: string;
   listing: Listing;

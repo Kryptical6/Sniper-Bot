@@ -96,6 +96,33 @@ export async function addDailySpend(robux: number): Promise<void> {
   );
 }
 
+/**
+ * Atomically reserves daily spend before a purchase is fired. This prevents two
+ * near-simultaneous Buy clicks from both passing the same stale cap check.
+ */
+export async function reserveDailySpend(robux: number, cap: number): Promise<boolean> {
+  const { rows } = await query(
+    `UPDATE daily_approvals
+       SET spent_robux = spent_robux + $2
+     WHERE approval_date = $1
+       AND status = 'approved'
+       AND spent_robux + $2 <= $3
+     RETURNING spent_robux`,
+    [todayUtc(), robux, cap]
+  );
+  return rows.length > 0;
+}
+
+/** Releases a prior reservation when Roblox rejects the purchase. */
+export async function releaseDailySpend(robux: number): Promise<void> {
+  await query(
+    `UPDATE daily_approvals
+       SET spent_robux = GREATEST(0, spent_robux - $2)
+     WHERE approval_date = $1`,
+    [todayUtc(), robux]
+  );
+}
+
 /** True only when today is explicitly approved (and sniping not paused). */
 export async function isSnipingAllowedToday(): Promise<boolean> {
   const appr = await getTodaysApproval();
@@ -172,6 +199,20 @@ export async function recordAttempt(a: AttemptInput): Promise<string> {
      a.projectedAtTime ?? null, a.discountPercent ?? null, a.score ?? null, a.outcome, a.reason ?? null]
   );
   return rows[0].id;
+}
+
+export async function updateAttemptOutcome(
+  id: string,
+  outcome: string,
+  reason?: string
+): Promise<void> {
+  await query(
+    `UPDATE snipe_attempts
+       SET outcome = $2,
+           reason = $3
+     WHERE id = $1`,
+    [id, outcome, reason ?? null]
+  );
 }
 
 export async function recordPurchase(p: {

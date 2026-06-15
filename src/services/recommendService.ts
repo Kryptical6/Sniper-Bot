@@ -55,9 +55,10 @@ export async function computeRecommendations(limit = 8): Promise<{ picks: Pick[]
     }
     await sleep(400);
   }
-  shortlist.sort((a, b) => b.breakdown.total - a.breakdown.total);
+  const affordable = shortlist.filter(p => p.price <= balance);
+  affordable.sort((a, b) => b.breakdown.total - a.breakdown.total);
 
-  return { picks: shortlist, balance };
+  return { picks: affordable, balance };
 }
 
 export function buildRecommendEmbed(picks: Pick[], balance: number) {

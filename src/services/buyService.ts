@@ -2,9 +2,11 @@
 // BUY SERVICE — executes a confirmed snipe purchase with all guards re-checked
 // ─────────────────────────────────────────────────────────────────────────────
 import { log } from '../utils/logger';
+import { config } from '../config';
 import { roblox, PurchaseError } from '../roblox/client';
 import {
-  getConfig, getTodaysApproval, addDailySpend, recordAttempt, recordPurchase, recordHolding,
+  getConfig, getTodaysApproval, reserveDailySpend, releaseDailySpend,
+  recordAttempt, updateAttemptOutcome, recordPurchase, recordHolding,
 } from '../db/helpers';
 import { SnipeCandidate } from '../types';
 
@@ -34,11 +36,7 @@ export async function executeBuy(c: SnipeCandidate): Promise<BuyResult> {
   const live = await roblox.getResellers(c.itemId, 3).catch(() => []);
   const stillThere = live.find(l => l.userAssetId === c.listing.userAssetId);
   if (!stillThere) {
-    await recordAttempt({
-      itemId: c.itemId, itemName: c.name, userAssetId: c.listing.userAssetId,
-      listedPrice: c.listing.price, rapAtTime: c.rap, outcome: 'missed',
-      reason: 'Listing gone before confirm',
-    });
+    await setOutcome(c, 'missed', 'Listing gone before confirm');
     return { ok: false, detail: 'Listing was already gone.' };
   }
   if (stillThere.price !== c.listing.price) {
@@ -47,6 +45,14 @@ export async function executeBuy(c: SnipeCandidate): Promise<BuyResult> {
 
   const productId = await roblox.getProductId(c.itemId);
   if (!productId) return fail(c, 'Could not resolve product id.');
+
+  if (config.dryRun) {
+    await setOutcome(c, 'dry_run', 'Dry run enabled; purchase not sent');
+    return { ok: false, detail: 'Dry run enabled; purchase was not sent to Roblox.' };
+  }
+
+  const reserved = await reserveDailySpend(c.listing.price, cfg.dailyCapRobux);
+  if (!reserved) return fail(c, 'Daily budget was used by another purchase before this click.');
 
   try {
     await roblox.purchase({
@@ -57,26 +63,23 @@ export async function executeBuy(c: SnipeCandidate): Promise<BuyResult> {
     });
   } catch (e) {
     const pe = e as PurchaseError;
-    await recordAttempt({
-      itemId: c.itemId, itemName: c.name, userAssetId: c.listing.userAssetId,
-      listedPrice: c.listing.price, rapAtTime: c.rap, outcome: 'failed',
-      reason: `${pe.code}: ${pe.message}`,
-    });
+    await releaseDailySpend(c.listing.price);
+    await setOutcome(c, 'failed', `${pe.code}: ${pe.message}`);
     log.warn('BUY', `Failed ${c.name}: ${pe.code} ${pe.message}`);
     return { ok: false, detail: `${pe.code} — ${pe.message}` };
   }
 
   // Success — record spend and purchase.
-  const attemptId = await recordAttempt({
+  const attemptId = c.attemptId ?? await recordAttempt({
     itemId: c.itemId, itemName: c.name, userAssetId: c.listing.userAssetId,
     listedPrice: c.listing.price, rapAtTime: c.rap, projectedAtTime: c.projectedValue,
     discountPercent: c.discountPercent, score: c.score, outcome: 'bought',
   });
+  if (c.attemptId) await updateAttemptOutcome(c.attemptId, 'bought');
   await recordPurchase({
     attemptId, itemId: c.itemId, itemName: c.name, robuxSpent: c.listing.price,
     rapAtTime: c.rap, userAssetId: c.listing.userAssetId,
   });
-  await addDailySpend(c.listing.price);
   // Register as a holding so it shows up in the Sell dashboard.
   await recordHolding({
     itemId: c.itemId, itemName: c.name,
@@ -87,10 +90,19 @@ export async function executeBuy(c: SnipeCandidate): Promise<BuyResult> {
   return { ok: true, detail: `Bought for ${c.listing.price.toLocaleString()} R$ (RAP ${c.rap.toLocaleString()}).` };
 }
 
-function fail(c: SnipeCandidate, detail: string): BuyResult {
-  void recordAttempt({
-    itemId: c.itemId, itemName: c.name, userAssetId: c.listing.userAssetId,
-    listedPrice: c.listing.price, rapAtTime: c.rap, outcome: 'failed', reason: detail,
-  });
+async function fail(c: SnipeCandidate, detail: string): Promise<BuyResult> {
+  await setOutcome(c, 'failed', detail);
   return { ok: false, detail };
+}
+
+async function setOutcome(c: SnipeCandidate, outcome: string, reason?: string): Promise<void> {
+  if (c.attemptId) {
+    await updateAttemptOutcome(c.attemptId, outcome, reason);
+    return;
+  }
+  await recordAttempt({
+    itemId: c.itemId, itemName: c.name, userAssetId: c.listing.userAssetId,
+    listedPrice: c.listing.price, rapAtTime: c.rap, projectedAtTime: c.projectedValue,
+    discountPercent: c.discountPercent, score: c.score, outcome, reason,
+  });
 }
