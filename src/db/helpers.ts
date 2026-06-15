@@ -385,6 +385,41 @@ export async function lastAdPostTime(): Promise<Date | null> {
   return rows[0]?.t ? new Date(rows[0].t) : null;
 }
 
+// ─── Profile / inventory / history ───────────────────────────────────────────
+/** Map of itemId → most recent cost we paid (for the inventory view). */
+export async function getCostByItem(): Promise<Map<number, number>> {
+  const { rows } = await query(
+    `SELECT DISTINCT ON (item_id) item_id, cost_robux
+     FROM sale_listings ORDER BY item_id, created_at DESC`
+  );
+  const m = new Map<number, number>();
+  for (const r of rows) m.set(Number(r.item_id), r.cost_robux);
+  return m;
+}
+
+/** Buy/sell history: every acquired copy with its outcome. */
+export async function getTradeHistory(limit = 25): Promise<{
+  itemId: number; itemName: string; cost: number;
+  status: string; listPrice: number | null; netEstimate: number | null;
+  soldAt: Date | null; createdAt: Date;
+}[]> {
+  const { rows } = await query(
+    `SELECT item_id, item_name, cost_robux, status, list_price, net_estimate, sold_at, created_at
+     FROM sale_listings ORDER BY created_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows.map(r => ({
+    itemId: Number(r.item_id),
+    itemName: r.item_name,
+    cost: r.cost_robux,
+    status: r.status,
+    listPrice: r.list_price,
+    netEstimate: r.net_estimate,
+    soldAt: r.sold_at ? new Date(r.sold_at) : null,
+    createdAt: new Date(r.created_at),
+  }));
+}
+
 export async function recentHistory(limit: number) {
   const { rows } = await query(
     `SELECT item_name, listed_price, rap_at_time, discount_percent, outcome, reason, created_at

@@ -82,6 +82,38 @@ class RobloxClient {
     return res.data.robux as number;
   }
 
+  // ─── Inventory (owned limiteds) ─────────────────────────────────────────────
+  /**
+   * Lists the buying account's collectible (limited) inventory, paginated.
+   * Each entry includes the live RAP and what the account originally paid.
+   */
+  async getCollectibleInventory(): Promise<{
+    assetId: number; userAssetId: number; name: string;
+    rap: number; originalPrice: number | null; serialNumber: number | null;
+  }[]> {
+    const out: any[] = [];
+    let cursor = '';
+    do {
+      const url =
+        `https://inventory.roblox.com/v1/users/${config.roblox.userId}/assets/collectibles` +
+        `?sortOrder=Asc&limit=100&cursor=${cursor}`;
+      const res = await this.backoffGet(url);
+      if (res.status !== 200 || !Array.isArray(res.data?.data)) break;
+      for (const d of res.data.data) {
+        out.push({
+          assetId: d.assetId,
+          userAssetId: d.userAssetId,
+          name: d.name,
+          rap: d.recentAveragePrice ?? 0,
+          originalPrice: d.originalPrice ?? null,
+          serialNumber: d.serialNumber ?? null,
+        });
+      }
+      cursor = res.data.nextPageCursor ?? '';
+    } while (cursor);
+    return out;
+  }
+
   // ─── Resale data (RAP + recent sales) ───────────────────────────────────────
   async getResaleData(itemId: number): Promise<{ rap: number; sales: number } | null> {
     const url = `https://economy.roblox.com/v1/assets/${itemId}/resale-data`;

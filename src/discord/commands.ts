@@ -19,4 +19,12 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('rolimons-ad')
     .setDescription('Manage Rolimons trade ads'),
+
+  new SlashCommandBuilder()
+    .setName('profile')
+    .setDescription('Your RAP, balance, inventory and history'),
+
+  new SlashCommandBuilder()
+    .setName('history')
+    .setDescription('Items you have bought and sold'),
 ];

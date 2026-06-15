@@ -104,6 +104,20 @@ export function netAfterFee(listPrice: number): number {
   return Math.round(listPrice * (1 - MARKETPLACE_FEE));
 }
 
+/**
+ * Human-readable price outlook from RoliMons trend/projection signals.
+ * RoliMons trend: 0 Lowering · 1 Unstable · 2 Stable · 3 Raising · 4 Fluctuating.
+ */
+export function priceOutlook(item: { trend: number; projected: boolean; demand: number } | undefined): string {
+  if (!item) return '❔ Unknown';
+  if (item.projected) return '⚠️ Projected (risky)';
+  if (item.trend === 3) return '📈 Rising';
+  if (item.trend === 0) return '📉 Lowering';
+  if (item.demand >= 3) return '📈 Likely up (high demand)';
+  if (item.trend === 1) return '↔️ Unstable';
+  return '➡️ Stable';
+}
+
 export function buyTag(score: number): '🟢 Strong Buy' | '🟡 Hold' | '🔴 Avoid' {
   if (score >= 75) return '🟢 Strong Buy';
   if (score >= 50) return '🟡 Hold';

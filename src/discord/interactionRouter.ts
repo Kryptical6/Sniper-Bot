@@ -14,6 +14,7 @@ import {
   getConfig, setConfig, getTodaysApproval, setApprovalStatus, ensureTodaysApprovalRow,
   addWatch, removeWatch, listWatch, getStats, getHoldings, getListing, getRealizedPnl,
   listAds, getAd, upsertAd, removeAd, toggleAdAuto,
+  getCostByItem, getTradeHistory,
 } from '../db/helpers';
 import { buyResultEmbed, missedEmbed, robux } from './embeds';
 import {
@@ -31,6 +32,9 @@ import { pendingPrompts } from '../services/snipeEngine';
 import { adDashboard, adActionButtons, adAddModal } from './adDashboard';
 import { postAd, cooldownRemainingMs } from '../services/adService';
 import { AD_TAGS, AdTag } from '../roblox/rolimons';
+import {
+  profileDashboard, inventoryView, historyEmbed, InventoryRow,
+} from './profileDashboard';
 
 export async function handleInteraction(i: Interaction): Promise<void> {
   if (i.user.id !== config.discord.ownerId) {
@@ -82,11 +86,52 @@ async function buildAdPayload() {
   return adDashboard(ads, cd, Boolean(config.rolimons.token));
 }
 
+/** Shared inventory fetch used by the profile + inventory views. */
+async function loadInventory(): Promise<InventoryRow[]> {
+  await rolimons.refresh();
+  const [inv, costMap] = await Promise.all([
+    roblox.getCollectibleInventory().catch(() => []),
+    getCostByItem(),
+  ]);
+  return inv.map(it => ({
+    assetId: it.assetId,
+    name: it.name,
+    rap: it.rap,
+    cost: costMap.has(it.assetId) ? costMap.get(it.assetId)! : null,
+    meta: rolimons.get(it.assetId),
+  }));
+}
+
+async function buildProfilePayload() {
+  await rolimons.refresh();
+  const [me, balance, inv] = await Promise.all([
+    roblox.whoami().catch(() => ({ name: 'Account', id: 0 })),
+    roblox.getBalance().catch(() => null),
+    roblox.getCollectibleInventory().catch(() => []),
+  ]);
+  const totalRap = inv.reduce((s, it) => s + (it.rap || 0), 0);
+  const estValue = inv.reduce((s, it) => {
+    const m = rolimons.get(it.assetId);
+    return s + (m && m.value > 0 ? m.value : it.rap || 0);
+  }, 0);
+  return profileDashboard({
+    username: me.name, balance, totalRap, itemCount: inv.length, estValue,
+  });
+}
+
 // ─── Slash commands ──────────────────────────────────────────────────────────
 async function handleCommand(i: ChatInputCommandInteraction): Promise<void> {
   if (i.commandName === 'snipe') return void i.reply({ ...(await buildSnipePayload()), ephemeral: true });
   if (i.commandName === 'feed')  return void i.reply({ ...(await buildFeedPayload()), ephemeral: true });
   if (i.commandName === 'rolimons-ad') return void i.reply({ ...(await buildAdPayload()), ephemeral: true });
+  if (i.commandName === 'profile') {
+    await i.deferReply({ ephemeral: true });
+    return void i.editReply(await buildProfilePayload());
+  }
+  if (i.commandName === 'history') {
+    await i.deferReply({ ephemeral: true });
+    return void i.editReply(historyEmbed(await getTradeHistory(25)));
+  }
 }
 
 // ─── Buttons ─────────────────────────────────────────────────────────────────
@@ -136,6 +181,21 @@ async function handleButton(i: ButtonInteraction): Promise<void> {
   if (id.startsWith('r:rm:')) {
     await removeAd(id.slice('r:rm:'.length));
     return void i.reply({ content: '🗑️ Ad removed.', ephemeral: true });
+  }
+
+  // Profile dashboard
+  if (id === 'p:refresh' || id === 'p:back') {
+    await i.deferUpdate();
+    return void i.editReply(await buildProfilePayload());
+  }
+  if (id === 'p:inventory' || id.startsWith('p:inv:')) {
+    const page = id.startsWith('p:inv:') ? Number(id.slice('p:inv:'.length)) || 0 : 0;
+    await i.deferUpdate();
+    return void i.editReply(inventoryView(await loadInventory(), page));
+  }
+  if (id === 'p:history') {
+    await i.deferUpdate();
+    return void i.editReply(historyEmbed(await getTradeHistory(25)));
   }
 
   // ── Snipe dashboard ──
