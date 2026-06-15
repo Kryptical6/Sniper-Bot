@@ -76,6 +76,34 @@ export function scoreItem(
   };
 }
 
+// ─── Resale pricing (fee-aware) ──────────────────────────────────────────────
+/** Roblox marketplace fee on limited resales (seller receives 1 - FEE). */
+export const MARKETPLACE_FEE = 0.30;
+
+export interface SellSuggestion {
+  listPrice: number;   // price to list at
+  netProceeds: number; // what you actually receive after the fee
+  profit: number;      // netProceeds - cost
+}
+
+/**
+ * Suggests a resale price that nets `marginPct`% profit over `cost` after fee.
+ *   net = list * (1 - FEE);  want net = cost * (1 + margin/100)
+ *   → list = cost * (1 + margin/100) / (1 - FEE)
+ * Capped so we never suggest above RAP (which rarely sells).
+ */
+export function suggestSellPrice(cost: number, marginPct: number, rap: number): SellSuggestion {
+  const target = (cost * (1 + marginPct / 100)) / (1 - MARKETPLACE_FEE);
+  const listPrice = Math.max(1, Math.min(Math.round(target), rap > 0 ? Math.round(rap) : target));
+  const netProceeds = Math.round(listPrice * (1 - MARKETPLACE_FEE));
+  return { listPrice, netProceeds, profit: netProceeds - cost };
+}
+
+/** Net proceeds for an arbitrary list price after the marketplace fee. */
+export function netAfterFee(listPrice: number): number {
+  return Math.round(listPrice * (1 - MARKETPLACE_FEE));
+}
+
 export function buyTag(score: number): '🟢 Strong Buy' | '🟡 Hold' | '🔴 Avoid' {
   if (score >= 75) return '🟢 Strong Buy';
   if (score >= 50) return '🟡 Hold';

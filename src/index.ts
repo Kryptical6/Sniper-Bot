@@ -12,6 +12,7 @@ import { handleInteraction } from './discord/interactionRouter';
 import { startSnipeEngine } from './services/snipeEngine';
 import { startFeedService } from './services/feedService';
 import { startRecommendAlerts } from './services/recommendService';
+import { startSellWatcher } from './services/sellService';
 import { startDailyApprovalScheduler } from './scheduler/dailyApproval';
 
 async function main(): Promise<void> {
@@ -46,17 +47,31 @@ async function main(): Promise<void> {
     startSnipeEngine();
     startFeedService();
     startRecommendAlerts();
+    startSellWatcher();
     startDailyApprovalScheduler();
   });
 
   client.on('interactionCreate', i => void handleInteraction(i));
 
-  await client.login(config.discord.token);
+  try {
+    await client.login(config.discord.token);
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/invalid.*authorization|token/i.test(msg)) {
+      log.error('BOOT', 'DISCORD_TOKEN is invalid. Reset it in the Developer Portal');
+      log.error('BOOT', '(App → Bot → Reset Token) and paste the new value into .env.');
+    } else {
+      log.error('BOOT', `Discord login failed: ${msg}`);
+    }
+    // Stay alive but idle so ts-node-dev does NOT respawn and hammer the APIs.
+    log.error('BOOT', 'Halting. Fix the token, then restart.');
+    return;
+  }
 }
 
 main().catch(e => {
   log.error('BOOT', (e as Error).message);
-  process.exit(1);
+  // Do not process.exit — that triggers --respawn and a tight crash loop.
 });
 
 // Keep the process resilient — log and survive unexpected errors.

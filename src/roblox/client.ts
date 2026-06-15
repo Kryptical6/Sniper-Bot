@@ -166,6 +166,70 @@ class RobloxClient {
     throw new PurchaseError(reason, code);
   }
 
+  // ─── Selling (resale listing) ───────────────────────────────────────────────
+  //
+  // ⚠️ Roblox's resale API moved to the "collectibles" system. Listing a copy
+  // now needs the item's collectibleItemId and the copy's collectibleInstanceId
+  // (NOT the classic assetId / userAssetId). We resolve those from inventory,
+  // then PATCH the resale price. These two endpoints are the most likely to
+  // change over time — they're isolated here so a fix is one-spot.
+
+  /** Resolves collectibleItemId for an asset (needed for resale calls). */
+  async getCollectibleItemId(itemId: number): Promise<string | null> {
+    const url = `https://apis.roblox.com/marketplace-items/v1/items/details`;
+    const token = await this.ensureCsrf();
+    const res = await this.http.post(url, { itemIds: [itemId] }, {
+      headers: { 'X-CSRF-TOKEN': token },
+    });
+    if (res.status !== 200) return null;
+    const entry = Array.isArray(res.data) ? res.data[0] : res.data?.[0];
+    return entry?.collectibleItemId ?? null;
+  }
+
+  /** Finds the collectibleInstanceId for a specific owned copy (by userAssetId). */
+  async getCollectibleInstanceId(itemId: number, userAssetId: number): Promise<string | null> {
+    const collectibleItemId = await this.getCollectibleItemId(itemId);
+    if (!collectibleItemId) return null;
+    const url =
+      `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}/resellable-instances` +
+      `?ownerType=User&ownerId=${config.roblox.userId}&limit=100`;
+    const res = await this.backoffGet(url);
+    if (res.status !== 200) return null;
+    const copy = (res.data?.itemInstances ?? []).find(
+      (c: any) => String(c.serialNumber) && c.collectibleItemInstanceId &&
+        (c.userAssetId == null || c.userAssetId === userAssetId)
+    );
+    return copy?.collectibleItemInstanceId ?? res.data?.itemInstances?.[0]?.collectibleItemInstanceId ?? null;
+  }
+
+  /**
+   * Lists an owned copy for resale at `price` Robux.
+   * @returns true on success.
+   */
+  async listForResale(itemId: number, userAssetId: number, price: number): Promise<boolean> {
+    const collectibleItemId = await this.getCollectibleItemId(itemId);
+    const instanceId = await this.getCollectibleInstanceId(itemId, userAssetId);
+    if (!collectibleItemId || !instanceId) throw new Error('Could not resolve collectible ids for resale');
+
+    const token = await this.ensureCsrf();
+    const url =
+      `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}` +
+      `/resellable-instance/${instanceId}/resale`;
+    const res = await this.http.post(url, { price }, { headers: { 'X-CSRF-TOKEN': token } });
+    if (res.status === 403 && res.headers['x-csrf-token']) {
+      this.csrfToken = res.headers['x-csrf-token'];
+      const retry = await this.http.post(url, { price }, { headers: { 'X-CSRF-TOKEN': this.csrfToken as string } });
+      return retry.status === 200;
+    }
+    return res.status === 200;
+  }
+
+  /** True if the given copy is still listed for sale (used by the unsold watcher). */
+  async isStillListed(itemId: number, userAssetId: number): Promise<boolean> {
+    const sellers = await this.getResellers(itemId, 100).catch(() => []);
+    return sellers.some(s => s.userAssetId === userAssetId);
+  }
+
   // ─── Internal: GET with 429 backoff ─────────────────────────────────────────
   private async backoffGet(url: string, attempt = 0): Promise<any> {
     const res = await this.http.get(url);

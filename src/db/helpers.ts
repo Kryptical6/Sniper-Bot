@@ -2,7 +2,7 @@
 // DB HELPERS — typed accessors over the schema
 // ─────────────────────────────────────────────────────────────────────────────
 import { query } from './index';
-import { SniperConfig } from '../types';
+import { SniperConfig, SaleListing } from '../types';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 export async function getConfig(): Promise<SniperConfig> {
@@ -21,6 +21,8 @@ export async function getConfig(): Promise<SniperConfig> {
     feedIncludeUgc: r.feed_include_ugc,
     pollIntervalSeconds: r.poll_interval_seconds,
     recommendAlertThreshold: r.recommend_alert_threshold,
+    sellDefaultMarginPct: r.sell_default_margin_pct,
+    unsoldNotifyHours: r.unsold_notify_hours,
   };
 }
 
@@ -37,6 +39,8 @@ const COLUMN_MAP: Record<keyof SniperConfig, string> = {
   feedIncludeUgc: 'feed_include_ugc',
   pollIntervalSeconds: 'poll_interval_seconds',
   recommendAlertThreshold: 'recommend_alert_threshold',
+  sellDefaultMarginPct: 'sell_default_margin_pct',
+  unsoldNotifyHours: 'unsold_notify_hours',
 };
 
 export async function setConfig<K extends keyof SniperConfig>(
@@ -99,23 +103,48 @@ export async function isSnipingAllowedToday(): Promise<boolean> {
 }
 
 // ─── Watchlist ───────────────────────────────────────────────────────────────
-export async function addWatch(itemId: number, name = ''): Promise<void> {
+export interface WatchEntry {
+  itemId: number;
+  name: string;
+  floor: number | null;
+}
+
+export async function addWatch(itemId: number, name = '', floor: number | null = null): Promise<void> {
   await query(
-    `INSERT INTO watchlist (item_id, name) VALUES ($1, $2)
-     ON CONFLICT (item_id) DO UPDATE SET active = TRUE, name = COALESCE(NULLIF($2,''), watchlist.name)`,
-    [itemId, name]
+    `INSERT INTO watchlist (item_id, name, floor_robux) VALUES ($1, $2, $3)
+     ON CONFLICT (item_id) DO UPDATE SET
+       active = TRUE,
+       name = COALESCE(NULLIF($2,''), watchlist.name),
+       floor_robux = COALESCE($3, watchlist.floor_robux)`,
+    [itemId, name, floor]
   );
+}
+
+export async function setWatchFloor(itemId: number, floor: number | null): Promise<void> {
+  await query(`UPDATE watchlist SET floor_robux = $2 WHERE item_id = $1`, [itemId, floor]);
 }
 
 export async function removeWatch(itemId: number): Promise<void> {
   await query(`DELETE FROM watchlist WHERE item_id = $1`, [itemId]);
 }
 
-export async function listWatch(): Promise<{ itemId: number; name: string }[]> {
+export async function listWatch(): Promise<WatchEntry[]> {
   const { rows } = await query(
-    `SELECT item_id, name FROM watchlist WHERE active = TRUE ORDER BY added_at`
+    `SELECT item_id, name, floor_robux FROM watchlist WHERE active = TRUE ORDER BY added_at`
   );
-  return rows.map(r => ({ itemId: Number(r.item_id), name: r.name }));
+  return rows.map(r => ({
+    itemId: Number(r.item_id),
+    name: r.name,
+    floor: r.floor_robux ?? null,
+  }));
+}
+
+/** Map of itemId → per-item floor for fast lookup in the engine. */
+export async function getWatchFloorMap(): Promise<Map<number, number | null>> {
+  const { rows } = await query(`SELECT item_id, floor_robux FROM watchlist WHERE active = TRUE`);
+  const m = new Map<number, number | null>();
+  for (const r of rows) m.set(Number(r.item_id), r.floor_robux ?? null);
+  return m;
 }
 
 // ─── Attempts & purchases ────────────────────────────────────────────────────
@@ -204,6 +233,87 @@ export async function getStats(period: 'today' | 'week' | 'all') {
     spent: purchases.rows[0].spent as number,
     rapValue: purchases.rows[0].rap_value as number,
   };
+}
+
+// ─── Sale listings (auto-sell) ───────────────────────────────────────────────
+function mapListing(r: any): SaleListing {
+  return {
+    id: r.id,
+    itemId: Number(r.item_id),
+    itemName: r.item_name,
+    userAssetId: Number(r.user_asset_id),
+    costRobux: r.cost_robux,
+    listPrice: r.list_price,
+    netEstimate: r.net_estimate,
+    status: r.status,
+  };
+}
+
+/** Records a freshly-bought copy as a holding available to sell. */
+export async function recordHolding(h: {
+  itemId: number; itemName: string; userAssetId: number; costRobux: number;
+}): Promise<void> {
+  await query(
+    `INSERT INTO sale_listings (item_id, item_name, user_asset_id, cost_robux, status)
+     VALUES ($1,$2,$3,$4,'held')
+     ON CONFLICT (user_asset_id) DO NOTHING`,
+    [h.itemId, h.itemName, h.userAssetId, h.costRobux]
+  );
+}
+
+export async function getHoldings(status?: SaleListing['status']): Promise<SaleListing[]> {
+  const { rows } = status
+    ? await query(`SELECT * FROM sale_listings WHERE status = $1 ORDER BY created_at DESC`, [status])
+    : await query(`SELECT * FROM sale_listings WHERE status IN ('held','listed') ORDER BY created_at DESC`);
+  return rows.map(mapListing);
+}
+
+export async function getListing(id: string): Promise<SaleListing | null> {
+  const { rows } = await query(`SELECT * FROM sale_listings WHERE id = $1`, [id]);
+  return rows[0] ? mapListing(rows[0]) : null;
+}
+
+export async function markListed(id: string, listPrice: number, netEstimate: number): Promise<void> {
+  await query(
+    `UPDATE sale_listings SET status='listed', list_price=$2, net_estimate=$3, listed_at=NOW()
+     WHERE id=$1`,
+    [id, listPrice, netEstimate]
+  );
+}
+
+export async function markSold(id: string): Promise<void> {
+  await query(`UPDATE sale_listings SET status='sold', sold_at=NOW() WHERE id=$1`, [id]);
+}
+
+export async function markCancelled(id: string): Promise<void> {
+  await query(`UPDATE sale_listings SET status='cancelled' WHERE id=$1`, [id]);
+}
+
+/** Listings still unsold past the nag window and not yet (re)notified. */
+export async function getStaleListings(hours: number): Promise<SaleListing[]> {
+  const { rows } = await query(
+    `SELECT * FROM sale_listings
+     WHERE status='listed'
+       AND listed_at < NOW() - ($1 || ' hours')::interval
+       AND (notified_at IS NULL OR notified_at < NOW() - ($1 || ' hours')::interval)
+     ORDER BY listed_at`,
+    [hours]
+  );
+  return rows.map(mapListing);
+}
+
+export async function touchNotified(id: string): Promise<void> {
+  await query(`UPDATE sale_listings SET notified_at=NOW() WHERE id=$1`, [id]);
+}
+
+export async function getRealizedPnl(): Promise<{ sold: number; proceeds: number; cost: number }> {
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS sold,
+            COALESCE(SUM(net_estimate),0)::int AS proceeds,
+            COALESCE(SUM(cost_robux),0)::int AS cost
+     FROM sale_listings WHERE status='sold'`
+  );
+  return { sold: rows[0].sold, proceeds: rows[0].proceeds, cost: rows[0].cost };
 }
 
 export async function recentHistory(limit: number) {

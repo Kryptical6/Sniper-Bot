@@ -18,7 +18,7 @@ import { sleep, jitteredMs, humanPause } from '../utils/sleep';
 import { roblox } from '../roblox/client';
 import { rolimons } from '../roblox/rolimons';
 import {
-  getConfig, getTodaysApproval, listWatch, recordAttempt,
+  getConfig, getTodaysApproval, listWatch, getWatchFloorMap, recordAttempt,
 } from '../db/helpers';
 import { scoreItem } from './scoring';
 import { snipeAlertEmbed } from '../discord/embeds';
@@ -81,6 +81,7 @@ async function tick(): Promise<void> {
   // Build scan set: watchlist (priority) + a rotating universe sample.
   const watch = await listWatch();
   const watchIds = watch.map(w => w.itemId);
+  const floorMap = await getWatchFloorMap();
   const universe = rolimons.all().map(i => i.id);
   const sample = sampleArray(universe.filter(id => !watchIds.includes(id)), UNIVERSE_SAMPLE);
   const scanIds = [...watchIds, ...sample];
@@ -100,9 +101,12 @@ async function tick(): Promise<void> {
 
     const discountPercent = ((rap - cheapest.price) / rap) * 100;
 
-    // Threshold OR floor logic (owner selected both criteria types).
+    // Threshold OR floor logic. Per-item floor (if set on the watchlist)
+    // overrides the global floor for that item.
+    const perItemFloor = floorMap.has(itemId) ? floorMap.get(itemId) : undefined;
+    const effectiveFloor = perItemFloor != null ? perItemFloor : cfg.floorRobux;
     const meetsThreshold = discountPercent >= cfg.thresholdPercent;
-    const meetsFloor = cfg.floorRobux != null && cheapest.price <= cfg.floorRobux;
+    const meetsFloor = effectiveFloor != null && cheapest.price <= effectiveFloor;
     if (!meetsThreshold && !meetsFloor) continue;
 
     // Hard guards before we even prompt.

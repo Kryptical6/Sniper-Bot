@@ -16,6 +16,20 @@ export interface SniperConfig {
   feedIncludeUgc: boolean;
   pollIntervalSeconds: number;
   recommendAlertThreshold: number; // min score for real-time DM
+  sellDefaultMarginPct: number;    // desired net profit % over cost
+  unsoldNotifyHours: number;       // nag if a listing hasn't sold
+}
+
+/** A copy we own that can be (or has been) listed for resale. */
+export interface SaleListing {
+  id: string;
+  itemId: number;
+  itemName: string;
+  userAssetId: number;
+  costRobux: number;
+  listPrice: number | null;
+  netEstimate: number | null;
+  status: 'held' | 'listed' | 'sold' | 'cancelled';
 }
 
 /** RoliMons item market data. */

@@ -43,10 +43,14 @@ export async function initDb(): Promise<void> {
       feed_include_ugc          BOOLEAN     NOT NULL DEFAULT TRUE,
       poll_interval_seconds     INT         NOT NULL DEFAULT 15,
       recommend_alert_threshold INT         NOT NULL DEFAULT 70,
+      sell_default_margin_pct   INT         NOT NULL DEFAULT 20,  -- desired net profit % over cost
+      unsold_notify_hours       INT         NOT NULL DEFAULT 24,  -- nag if a listing hasn't sold
       updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT sniper_config_singleton CHECK (id = 1)
     )`);
   await query(`INSERT INTO sniper_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+  await query(`ALTER TABLE sniper_config ADD COLUMN IF NOT EXISTS sell_default_margin_pct INT NOT NULL DEFAULT 20`);
+  await query(`ALTER TABLE sniper_config ADD COLUMN IF NOT EXISTS unsold_notify_hours INT NOT NULL DEFAULT 24`);
 
   // One row per UTC day recording the owner's go/no-go decision.
   await query(`
@@ -62,11 +66,13 @@ export async function initDb(): Promise<void> {
   // Priority watchlist of specific limited item ids.
   await query(`
     CREATE TABLE IF NOT EXISTS watchlist (
-      item_id   BIGINT PRIMARY KEY,
-      name      TEXT        NOT NULL DEFAULT '',
-      active    BOOLEAN     NOT NULL DEFAULT TRUE,
-      added_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      item_id     BIGINT PRIMARY KEY,
+      name        TEXT        NOT NULL DEFAULT '',
+      floor_robux INT,                       -- per-item price floor (overrides global)
+      active      BOOLEAN     NOT NULL DEFAULT TRUE,
+      added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+  await query(`ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS floor_robux INT`);
 
   // Every snipe consideration, regardless of outcome.
   await query(`
@@ -100,6 +106,25 @@ export async function initDb(): Promise<void> {
       confirmed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_purchase_history_confirmed ON purchase_history(confirmed_at DESC)`);
+
+  // Resale listings created by the sell flow. One row per copy we list.
+  await query(`
+    CREATE TABLE IF NOT EXISTS sale_listings (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      item_id       BIGINT      NOT NULL,
+      item_name     TEXT        NOT NULL DEFAULT '',
+      user_asset_id BIGINT      NOT NULL,
+      cost_robux    INT         NOT NULL,          -- what we paid (from purchase)
+      list_price    INT,                            -- price we listed at (null until listed)
+      net_estimate  INT,                            -- expected proceeds after fee
+      status        TEXT        NOT NULL DEFAULT 'held', -- held|listed|sold|cancelled
+      listed_at     TIMESTAMPTZ,
+      sold_at       TIMESTAMPTZ,
+      notified_at   TIMESTAMPTZ,                    -- last "still unsold" nag
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sale_listings_status ON sale_listings(status, listed_at)`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_listings_uaid ON sale_listings(user_asset_id)`);
 
   // Dedup guard for the new-limiteds feed.
   await query(`

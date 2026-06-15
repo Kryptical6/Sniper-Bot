@@ -4,7 +4,7 @@
 import { log } from '../utils/logger';
 import { roblox, PurchaseError } from '../roblox/client';
 import {
-  getConfig, getTodaysApproval, addDailySpend, recordAttempt, recordPurchase,
+  getConfig, getTodaysApproval, addDailySpend, recordAttempt, recordPurchase, recordHolding,
 } from '../db/helpers';
 import { SnipeCandidate } from '../types';
 
@@ -77,6 +77,11 @@ export async function executeBuy(c: SnipeCandidate): Promise<BuyResult> {
     rapAtTime: c.rap, userAssetId: c.listing.userAssetId,
   });
   await addDailySpend(c.listing.price);
+  // Register as a holding so it shows up in the Sell dashboard.
+  await recordHolding({
+    itemId: c.itemId, itemName: c.name,
+    userAssetId: c.listing.userAssetId, costRobux: c.listing.price,
+  });
 
   log.info('BUY', `Bought ${c.name} for ${c.listing.price} R$`);
   return { ok: true, detail: `Bought for ${c.listing.price.toLocaleString()} R$ (RAP ${c.rap.toLocaleString()}).` };
