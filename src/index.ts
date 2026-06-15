@@ -16,6 +16,7 @@ import { startSellWatcher } from './services/sellService';
 import { startAlertWatcher } from './services/alertService';
 import { runMoversDigest } from './services/moversService';
 import { startDailyApprovalScheduler } from './scheduler/dailyApproval';
+import { syncCommands } from './discord/registerCommands';
 
 async function main(): Promise<void> {
   log.info('BOOT', 'Starting RBX Sniper Bot…');
@@ -44,6 +45,9 @@ async function main(): Promise<void> {
   client.once('ready', () => {
     log.info('DISCORD', `Logged in as ${client.user?.tag}`);
     client.user?.setActivity('the limited market', { type: ActivityType.Watching });
+
+    // Auto-sync slash commands on every boot so deploys refresh them.
+    void syncCommands().catch(e => log.error('REGISTER', (e as Error).message));
 
     // Start background services once the gateway is live.
     startSnipeEngine();
