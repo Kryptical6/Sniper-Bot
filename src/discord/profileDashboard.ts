@@ -59,8 +59,8 @@ const POSS_COLOR: Record<string, number> = {
 
 export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): Panel {
   // One card embed per item (with thumbnail) for readability. Discord caps a
-  // message at 10 embeds, so we show 4 cards + 1 header per page.
-  const PER = 4;
+  // message at 10 embeds; 3 cards + header per page keeps generous spacing.
+  const PER = 3;
   const pages = Math.max(1, Math.ceil(rows.length / PER));
   const clamped = Math.min(Math.max(0, page), pages - 1);
   const slice = rows.slice(clamped * PER, clamped * PER + PER);
@@ -110,9 +110,10 @@ export function inventoryView(rows: InventoryRow[], page = 0, marginPct = 20): P
 
       card.addFields({
         name: '💰 Suggested sell',
-        value: `**${robux(sell.suggestedPrice)}**  →  net ~${robux(sell.net)}\n${sell.advice}`,
+        value: `**${robux(sell.suggestedPrice)}**  →  net ~${robux(sell.net)}\n${sell.advice}\n​`,
         inline: false,
       });
+      card.setFooter({ text: `ID ${r.assetId}  ·  ━━━━━━━━━━━━━━━━━━━━` });
 
       embeds.push(card);
     }

@@ -85,17 +85,22 @@ async function buildSellPayload() {
 /** Shared inventory fetch used by the profile + inventory views. */
 async function loadInventory(): Promise<InventoryRow[]> {
   await rolimons.refresh();
-  const [inv, costMap] = await Promise.all([
+  const [inv, dbCosts, txnCosts] = await Promise.all([
     roblox.getCollectibleInventory().catch(() => []),
-    getCostByItem(),
+    getCostByItem(),                              // what the bot recorded buying
+    roblox.getPurchaseCostMap().catch(() => new Map<number, number>()), // Roblox txn history
   ]);
-  return inv.map(it => ({
-    assetId: it.assetId,
-    name: it.name,
-    rap: it.rap,
-    cost: costMap.has(it.assetId) ? costMap.get(it.assetId)! : null,
-    meta: rolimons.get(it.assetId),
-  }));
+  return inv.map(it => {
+    // Prefer the bot's own record; fall back to Roblox purchase history.
+    const cost = dbCosts.get(it.assetId) ?? txnCosts.get(it.assetId) ?? null;
+    return {
+      assetId: it.assetId,
+      name: it.name,
+      rap: it.rap,
+      cost,
+      meta: rolimons.get(it.assetId),
+    };
+  });
 }
 
 /** Analyses one item id and renders the search embed (with optional matches). */

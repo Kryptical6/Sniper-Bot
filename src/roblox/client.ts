@@ -114,6 +114,37 @@ class RobloxClient {
     return out;
   }
 
+  // ─── Purchase transaction history ───────────────────────────────────────────
+  /**
+   * Builds a map of assetId → Robux paid from the account's purchase history,
+   * so we can show cost basis for items bought before the bot existed.
+   * Keeps the most recent purchase price per asset. Pages back a few hundred
+   * transactions (Roblox keeps a limited window).
+   */
+  async getPurchaseCostMap(maxPages = 6): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    let cursor = '';
+    for (let page = 0; page < maxPages; page++) {
+      const url =
+        `https://economy.roblox.com/v2/users/${config.roblox.userId}/transactions` +
+        `?transactionType=Purchase&limit=100&cursor=${cursor}`;
+      const res = await this.backoffGet(url);
+      if (res.status !== 200 || !Array.isArray(res.data?.data)) break;
+      for (const t of res.data.data) {
+        const assetId = t.details?.id;
+        const amount = t.currency?.amount;
+        // Only Robux-denominated asset purchases; keep the most recent (first seen).
+        if (assetId && typeof amount === 'number' && amount > 0 && !map.has(assetId)) {
+          map.set(Number(assetId), amount);
+        }
+      }
+      cursor = res.data.nextPageCursor ?? '';
+      if (!cursor) break;
+      await sleep(300);
+    }
+    return map;
+  }
+
   // ─── Resale data (RAP + recent sales) ───────────────────────────────────────
   async getResaleData(itemId: number): Promise<{ rap: number; sales: number } | null> {
     const url = `https://economy.roblox.com/v1/assets/${itemId}/resale-data`;
